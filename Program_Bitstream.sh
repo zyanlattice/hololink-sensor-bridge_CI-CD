@@ -5,12 +5,13 @@ version=""
 bitstream_path=""
 md5=""
 peer_ip=""
+max_saves=1
 manifest=""
 
 
 usage() {
   cat >&2 <<'EOF'
-Usage: --version <version> --bitstream-path <bitstream_path> --peer-ip <peer_ip> [--md5 <md5>] [--manifest <manifest_path>]
+Usage: --version <version> --bitstream-path <bitstream_path> --peer-ip <peer_ip> [--md5 <md5>] [--manifest <manifest_path>] [--max-saves <number>]
 EOF
   exit 2
 }
@@ -18,7 +19,7 @@ EOF
 
 # Parse long options; note the trailing ':' means the option requires a value #|| usage
 PARSED_ARGS=$(getopt -o '' \
-  -l version:,bitstream-path:,md5:,peer-ip:,manifest: -- "$@") 
+  -l version:,bitstream-path:,md5:,peer-ip:,manifest:,max-saves: -- "$@") 
 eval set -- "$PARSED_ARGS"
 
 while true; do
@@ -27,6 +28,7 @@ while true; do
     --bitstream-path)  bitstream_path="$2"; shift 2 ;;
     --md5)             md5="$2"; shift 2 ;;
     --peer-ip)         peer_ip="$2"; shift 2 ;;
+    --max-saves)      max_saves="$2"; shift 2 ;;
     --manifest)        manifest="$2"; shift 2 ;;  # expects a string value
     --) shift; break ;;
     *) usage ;;
@@ -124,6 +126,7 @@ docker run "${DOCKER_IT[@]}" --rm \
   -e BITSTREAM_PATH="$bitstream_path" \
   -e MD5="$md5" \
   -e PEER_IP="$peer_ip" \
+  -e MAX_SAVES="$max_saves" \
   -e MANIFEST="$manifest" \
   "${IMAGE_NAME}:${DOCKER_VERSION}" bash -lc '/home/lattice/HSB/CI_CD/scripts/doc_py_script.sh'
   #${IMAGE_NAME}:${DOCKER_VERSION}" bash -lc 'cd /home/lattice/HSB/CI_CD && python3 bitstream_programmer_wrapper.py'

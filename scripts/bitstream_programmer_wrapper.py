@@ -15,6 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=str, help="File name for generated manifest", required=False)
     parser.add_argument("--fpga-uuid", type=str, help="FPGA UUID", default=None)
     parser.add_argument("--peer-ip", type=str, help="Hololink device IP to query FPGA UUID", default=None)
+    parser.add_argument("--max-saves", type=int, help="Maximum number of images to save during verification (0 = no images, just test frames)", default=1)
     return parser.parse_args()
 
 def get_curr_path() -> str:
@@ -42,6 +43,7 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     manifest = args.manifest 
     fpga_uuid = args.fpga_uuid 
     peer_ip = args.peer_ip 
+    max_saves = args.max_saves
     # bitstream_path = args.bitstream_path if args.bitstream_path else os.getenv("BITSTREAM_PATH")
     # version = args.version if args.version else os.getenv("VERSION")
     # md5 = args.md5 if args.md5 else os.getenv("MD5")
@@ -108,7 +110,7 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     sys.argv = ori_argv
 
     manifest_file = manifest if manifest else "new_manifest.yaml"
-    manifest_path = os.path.join("/home/lattice/HSB/CI_CD", manifest_file)
+    manifest_path = os.path.join("/home/lattice/HSB/CI_CD/scripts", manifest_file)
     time.sleep(0.2)  # wait for file system to catch up
 
     if not os.path.isfile(manifest_path):
@@ -158,8 +160,13 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     print("Running quick functional test...")
     sys.argv = [
         "verify_camera_imx258.py",
-        "--camera-ip", peer_ip
+        "--camera-ip", peer_ip,
+        "--max-saves", str(max_saves)
     ]
+    
+    # Only add --save-images flag if max_saves > 0
+    if max_saves > 0:
+        sys.argv.append("--save-images")
 
     # Initialize variables before try block
     ethspeed_ok = False

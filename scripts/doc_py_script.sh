@@ -8,6 +8,7 @@ version="${VERSION:-}"
 bitstream_path="${BITSTREAM_PATH:-}"
 md5="${MD5:-}"
 peer_ip="${PEER_IP:-}"
+max_saves="${MAX_SAVES:-1}"
 manifest="${MANIFEST:-}"
 
 echo "=== Received Environment Variables ==="
@@ -16,6 +17,7 @@ echo "Bitstream Path:  $bitstream_path"
 echo "MD5:             $md5"
 echo "Peer IP:         $peer_ip"
 echo "Manifest:        ${manifest:-<none>}"
+echo "Max Saves:       ${max_saves:-<none>}"
 echo "======================================"
 
 
@@ -31,11 +33,13 @@ if [[ -n "$manifest" ]]; then
     --version "$version" \
     --md5 "$md5" \
     --peer-ip "$peer_ip" \
+    --max-saves "$max_saves" \
     --manifest "$manifest"
 else
   python3 scripts/bitstream_programmer_wrapper.py \
     --bitstream-path "$bitstream_path" \
     --version "$version" \
     --md5 "$md5" \
+    --max-saves "$max_saves" \
     --peer-ip "$peer_ip"
 fi

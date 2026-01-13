@@ -738,10 +738,9 @@ def main() -> tuple[bool, bool]:
     parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
     parser.add_argument("--log-level", type=int, default=logging.INFO, help="Logging level")
-    parser.add_argument("--save-images", action="store_true", help="Save captured frames as images")
+    parser.add_argument("--save-images", action="store_true", default=False, help="Save captured frames as images")
     parser.add_argument("--save-dir", type=str, default="/home/lattice/HSB/CI_CD/test_image_folder", help="Directory to save images")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
-    parser.add_argument("--check-ethernet", type=bool, default=True, help="Also verify Ethernet link speed")
     parser.add_argument("--min-eth-speed", type=int, default=10000, help="Minimum Ethernet speed in Mbps")
     
     args = parser.parse_args()
@@ -759,11 +758,10 @@ def main() -> tuple[bool, bool]:
     all_passed = True
     results = []
     
-    # Check Ethernet speed if requested
-    if args.check_ethernet:
-        eth_success, eth_message, eth_stats = verify_ethernet_link_speed(args.min_eth_speed)
-        results.append(("Ethernet Link Speed", eth_success, eth_message, eth_stats))
-        all_passed = all_passed and eth_success
+    # Always check Ethernet speed
+    eth_success, eth_message, eth_stats = verify_ethernet_link_speed(args.min_eth_speed)
+    results.append(("Ethernet Link Speed", eth_success, eth_message, eth_stats))
+    all_passed = all_passed and eth_success
     
     # Verify camera
     cam_success, cam_message, cam_stats = verify_camera_functional(
@@ -799,7 +797,7 @@ def main() -> tuple[bool, bool]:
         #sys.exit(0)
     else:
         print(" TESTS FAILED")
-        print(" camera_ok:", cam_success, "ethernet_ok:", eth_success if args.check_ethernet else "N/A")
+        print(" camera_ok:", cam_success, "ethernet_ok:", eth_success)
         #sys.exit(1)
     print("\n" + "=" * 90)
 
