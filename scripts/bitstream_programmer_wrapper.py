@@ -148,8 +148,8 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     ])
     control_tapo_kasa.main()
 
-    print("Waiting for device to boot up for 8 seconds...")
-    time.sleep(8) # wait for device to boot up
+    print("Waiting for device to boot up for 6 seconds...")
+    time.sleep(6) # wait for device to boot up
 
     powercycle_ok = True
     print("Hololink device power cycled successfully.")
