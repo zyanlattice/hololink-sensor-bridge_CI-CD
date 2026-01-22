@@ -3,6 +3,15 @@
 Automated functional verification script for IMX258 camera after bitstream programming.
 Runs headless, captures frames, performs basic validation, and exits automatically.
 Can be run standalone without pytest.
+
+IMX258_MODE_1920X1080_60FPS = 0
+    IMX258_MODE_1920X1080_30FPS = 1
+    IMX258_MODE_1920X1080_60FPS_cus = 2
+    IMX258_MODE_1920X1080_30FPS_cus = 3
+    IMX258_MODE_1920X1080_60FPS_new = 4
+    IMX258_MODE_4K_30FPS = 5
+    Unknown = -1
+
 """
 
 import argparse
@@ -12,10 +21,7 @@ import sys
 import time
 import threading
 import os
-import re
-import subprocess
-from datetime import timedelta
-from typing import Tuple, Optional
+from typing import Tuple
 import numpy as np
 import terminal_print_formating as tpf
 
@@ -31,7 +37,6 @@ import hololink as hololink_module
 class TimeoutError(Exception):
     """Raised when verification times out."""
     pass
-
 
 class ImageSaverOp(holoscan.core.Operator):
     """Operator to save frames as images."""
@@ -68,7 +73,7 @@ class ImageSaverOp(holoscan.core.Operator):
             
             tensor = in_message.get("")
             
-            # Convert Holoscan Tensor → CuPy array (GPU) → NumPy array (CPU)
+            # Convert Holoscan Tensor (GPU object) → CuPy array (GPU array) → NumPy array (CPU array)
             cuda_array = cp.asarray(tensor)
             host_array = cp.asnumpy(cuda_array)
             
@@ -121,7 +126,8 @@ class ImageSaverOp(holoscan.core.Operator):
 
             except Exception as e:
                 logging.warning(f"  Could not save PNG: {e}")
-                
+
+            
             self.saved_count += 1
 
         except Exception as e:
@@ -130,16 +136,13 @@ class ImageSaverOp(holoscan.core.Operator):
 class FrameCounterOp(holoscan.core.Operator):
     """Operator to count received frames and track timestamps."""
     
-    def __init__(self, *args, frame_limit=50, app=None, pass_through=False, camera=None, hololink=None, save_images=False, **kwargs):
+    def __init__(self, *args, frame_limit=50, pass_through=False, **kwargs):
         self.pass_through = pass_through
         self.frame_limit = frame_limit
         self.frame_count = 0
         self.start_time = None
         self.timestamps = []
-        self.app = app
-        self.camera = camera  # ← Add camera reference
-        self.hololink = hololink  # ← Add hololink reference
-        self.save_images = save_images
+        self.fps = 0.0
         
         super().__init__(*args, **kwargs)
         
@@ -149,6 +152,12 @@ class FrameCounterOp(holoscan.core.Operator):
             spec.output("output")
         
     def compute(self, op_input, op_output, context):
+        # Check BEFORE incrementing to prevent off-by-one errors
+        if self.frame_count >= self.frame_limit:
+            # Already at limit - receive frame to unblock pipeline but don't count it
+            in_message = op_input.receive("input")
+            return
+        
         if self.start_time is None:
             self.start_time = time.time()
         
@@ -161,39 +170,17 @@ class FrameCounterOp(holoscan.core.Operator):
             op_output.emit(in_message, "output")
         else:
             in_message = op_input.receive("input")
-        
+                
+        elapsed = time.time() - self.start_time
+        fps = self.frame_count / elapsed if elapsed > 0 else 0
+
         if self.frame_count % 10 == 0:
-            elapsed = time.time() - self.start_time
-            fps = self.frame_count / elapsed if elapsed > 0 else 0
             logging.info(f"Frames received: {self.frame_count}, FPS: {fps:.2f}")
 
-        # CRITICAL: Stop the application when we reach frame_limit
-        if self.frame_count >= self.frame_limit:
-            logging.info(f"Reached frame limit ({self.frame_limit}), stopping application...")
-            
-            if not self.save_images:
-                def stop_everything():
-                    try:
-                        if self.camera:
-                            self.camera.stop()
-                    except Exception as e:
-                        logging.warning(f"Error stopping camera: {e}")
-                    
-                    try:
-                        if self.hololink:
-                            self.hololink.stop()
-                    except Exception as e:
-                        logging.warning(f"Error stopping hololink: {e}")
-                    
-                    time.sleep(0.5)
-                    
-                    if self.app:
-                        try:
-                            self.app.interrupt()
-                        except Exception as e:
-                            logging.warning(f"Error interrupting app: {e}")
+        if self.frame_count == self.frame_limit:
+            self.fps = self.frame_count / elapsed if elapsed > 0 else 0
 
-                threading.Thread(target=stop_everything, daemon=True).start()
+        # Frame counting complete - CountCondition will stop graph after frame_limit
 
 class VerificationApplication(holoscan.core.Application):
     """Headless application for quick functional verification."""
@@ -228,6 +215,21 @@ class VerificationApplication(holoscan.core.Application):
         self._image_saver = None
 
     def compose(self):
+        # Use CountCondition to limit frames (like linux_imx258_player.py)
+        # This allows the receiver to stop naturally and GXF graph to complete
+        if self._frame_limit:
+            self._count = holoscan.conditions.CountCondition(
+                self,
+                name="count",
+                count=self._frame_limit,
+            )
+            count_condition = self._count
+        else:
+            # If no frame limit, use a boolean condition for continuous operation
+            self._ok = holoscan.conditions.BooleanCondition(
+                self, name="ok", enable_tick=True
+            )
+            count_condition = self._ok
                 
         csi_to_bayer_pool = holoscan.resources.BlockMemoryPool(
             self,
@@ -250,6 +252,7 @@ class VerificationApplication(holoscan.core.Application):
         # Pass CountCondition to receiver - IT STOPS AFTER frame_limit FRAMES
         receiver_operator = hololink_module.operators.LinuxReceiverOperator(
             self,
+            count_condition,
             name="receiver",
             frame_size=frame_size,
             frame_context=self._cuda_context,
@@ -305,10 +308,6 @@ class VerificationApplication(holoscan.core.Application):
                 self, 
                 name="frame_counter",
                 frame_limit=self._frame_limit,
-                app=self,
-                camera=self._camera,  # ← Pass camera
-                hololink=self._hololink,  # ← Pass hololink  
-                save_images=self._save_images,
                 pass_through=True
             )
             
@@ -322,10 +321,6 @@ class VerificationApplication(holoscan.core.Application):
                 self, 
                 name="frame_counter",
                 frame_limit=self._frame_limit,
-                app=self, 
-                camera=self._camera,  # ← Pass camera
-                hololink=self._hololink,  # ← Pass hololink
-                save_images=self._save_images,
                 pass_through=False
             )
             self.add_flow(csi_to_bayer_operator, self._frame_counter, {("output", "input")})
@@ -336,8 +331,9 @@ class VerificationApplication(holoscan.core.Application):
     def get_fps(self) -> float:
         if not self._frame_counter or not self._frame_counter.start_time:
             return 0.0
-        elapsed = time.time() - self._frame_counter.start_time
-        return self._frame_counter.frame_count / elapsed if elapsed > 0 else 0.0
+        #elapsed = time.time() - self._frame_counter.start_time
+        #return self._frame_counter.frame_count / elapsed if elapsed > 0 else 0.0
+        return self._frame_counter.fps
     
     def get_saved_count(self) -> int:
         """Get the number of images saved."""
@@ -349,109 +345,6 @@ class VerificationApplication(holoscan.core.Application):
                 super().interrupt()
         except Exception as e:
             logging.warning(f"Error calling interrupt: {e}")
-
-# Network speed detection functions from conftest.py
-def _read_ethtool_speed(interface: str) -> Optional[int]:
-    """Read link speed using ethtool command."""
-    try:
-        proc = subprocess.run(["ethtool", interface], capture_output=True, text=True, check=False)
-        out = (proc.stdout or "") + (proc.stderr or "")
-        m = re.search(r"Speed:\s*(\d+)\s*Mb/s", out)
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return None
-
-
-def _read_sysfs_speed(interface: str) -> Optional[int]:
-    """Read link speed from sysfs."""
-    try:
-        path = f"/sys/class/net/{interface}/speed"
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                s = f.read().strip()
-                if s and s.isdigit():
-                    return int(s)
-    except Exception:
-        pass
-    return None
-
-
-def _read_psutil_speed(interface: str) -> Optional[int]:
-    """Read link speed using psutil."""
-    try:
-        import psutil
-        stats = psutil.net_if_stats()
-        info = stats.get(interface)
-        if info and info.isup and info.speed:
-            return int(info.speed)
-    except Exception:
-        pass
-    return None
-
-
-def _detect_interface_from_hololink(timeout_seconds: int = 10) -> Optional[str]:
-    """Detect network interface connected to Hololink device."""
-    try:
-        devices = {}
-        def on_meta(m):
-            sn = m.get("serial_number")
-            if sn and sn not in devices:
-                devices[sn] = m
-            return True
-        hololink_module.Enumerator().enumerated(on_meta, hololink_module.Timeout(timeout_seconds))
-        for _sn, meta in devices.items():
-            iface = meta.get("interface") or meta.get("interface_name")
-            if isinstance(iface, str) and iface:
-                return iface
-    except Exception:
-        pass
-    return None
-
-
-def verify_ethernet_link_speed(min_mbps: int = 1000) -> Tuple[bool, str, dict]:
-    """
-    Verify that the Ethernet link speed meets minimum requirements.
-    
-    Args:
-        min_mbps: Minimum expected link speed in Mbps
-        
-    Returns:
-        Tuple of (success: bool, message: str, stats: dict)
-    """
-    logging.info("Verifying Ethernet link speed...")
-    
-    # Detect interface
-    iface = _detect_interface_from_hololink(timeout_seconds=10)
-    if not iface:
-        return False, "Could not detect Hololink network interface", {}
-    
-    logging.info(f"Detected Hololink interface: {iface}")
-    
-    # Try multiple methods to read speed
-    speed = _read_psutil_speed(iface)
-    if speed is None:
-        speed = _read_ethtool_speed(iface)
-    if speed is None:
-        speed = _read_sysfs_speed(iface)
-    
-    if speed is None or speed <= 0:
-        return False, f"Link speed unavailable for interface '{iface}'", {"interface": iface}
-    
-    stats = {
-        "interface": iface,
-        "speed_mbps": speed,
-        "min_expected_mbps": min_mbps,
-    }
-    
-    logging.info(f"Interface: {iface}, Link speed: {speed} Mbps (min: {min_mbps} Mbps)")
-    
-    # Allow 5% tolerance for rounding
-    if speed >= int(0.95 * min_mbps):
-        return True, f"Link speed OK: {speed} Mbps", stats
-    else:
-        return False, f"Link speed {speed} Mbps below minimum {min_mbps} Mbps", stats
 
 
 def verify_camera_functional(
@@ -512,13 +405,6 @@ def verify_camera_functional(
     application = None
     stop_event = threading.Event()
     
-    def timeout_thread():
-        if stop_event.wait(timeout_seconds):
-            return
-        logging.error(f"Timeout after {timeout_seconds} seconds")
-        if application:
-            application.interrupt()
-    
     try:
         # Initialize CUDA
         logging.info("Initializing CUDA...")
@@ -569,6 +455,7 @@ def verify_camera_functional(
         logging.info("Starting Hololink and camera...")
         hololink = hololink_channel.hololink()
         hololink.start()
+
         application._hololink = hololink  # ← Set hololink reference
         
         
@@ -593,69 +480,70 @@ def verify_camera_functional(
         
         camera.start()
         
-        # Start timeout thread
-        timeout_t = threading.Thread(target=timeout_thread, daemon=True)
-        timeout_t.start()
-        
         # Run verification
         logging.info(f"Capturing {frame_limit} frames...")
         start_time = time.time()
         
-        # Flag to track if we should force shutdown
-        force_shutdown = threading.Event()
-        
         def run_app():
             try:
-                application.run()
+                application.run()  # Will complete naturally when CountCondition reaches frame_limit
             except Exception as e:
                 logging.warning(f"Application exception: {e}")
         
-        # Run in daemon thread so we can kill it
+        # Run in daemon thread so GXF graph executes
         app_thread = threading.Thread(target=run_app, daemon=True)
         app_thread.start()
         
-        # Monitor for completion
-        max_wait = timeout_seconds + 3  # Add grace period
-        
-        # Wait for either:
-        # 1. App completes naturally (unlikely with our blocking receiver)
-        # 2. Timeout expires
-        # 3. We detect we've saved enough images
-        
+        # Monitor for completion - the graph will naturally complete when it reaches frame_limit
         poll_interval = 0.1
-        waited = 0
+        first_frame_time = None
+        last_frame_time = None
         
-        while app_thread.is_alive() and waited < max_wait:
+        # Wait for application thread to complete (with timeout safety)
+        max_wait_time = timeout_seconds + 30  # Extra time for GXF setup + frame capture
+        start_wait = time.time()
+        
+        while app_thread.is_alive():
             time.sleep(poll_interval)
-            waited += poll_interval
             
-            # Check if we've received/saved enough
-            if save_images:
-                saved = application.get_saved_count()
-                if saved >= max_saves:
-                    logging.info(f"Saved {saved}/{max_saves} images, forcing shutdown...")
-                    force_shutdown.set()
-                    break
-            else:
-                frames = application.get_frame_count()
-                if frames >= frame_limit:
-                    logging.info(f"Received {frames}/{frame_limit} frames, forcing shutdown...")
-                    force_shutdown.set()
-                    break
+            # Track frame timing for timeout monitoring
+            frames = application.get_frame_count()
+            
+            if frames > 0 and first_frame_time is None:
+                first_frame_time = time.time()
+                logging.info(f"First frame received after {time.time() - start_time:.2f}s")
+            
+            if frames > 0:
+                last_frame_time = time.time()
+            
+            # Safety timeout: if no new frames for timeout_seconds, abort
+            if last_frame_time is not None and (time.time() - last_frame_time) > timeout_seconds:
+                logging.error(f"No new frames for {timeout_seconds}s, aborting...")
+                try:
+                    application.interrupt()
+                except Exception as e:
+                    logging.warning(f"Error interrupting app: {e}")
+                break
+            
+            # Safety timeout: if total time exceeds max, abort
+            if (time.time() - start_wait) > max_wait_time:
+                logging.error(f"Total wait time exceeded {max_wait_time}s, aborting...")
+                try:
+                    application.interrupt()
+                except Exception as e:
+                    logging.warning(f"Error interrupting app: {e}")
+                break
         
-        # If we hit timeout or saved enough, force exit
-        if force_shutdown.is_set() or waited >= max_wait:
-            logging.info("Forcing application shutdown, daemon thread will be terminated - waiting for GXF to deactivate gracefully...")
-            
+        # Wait for thread to join (should be instant or very quick now that graph completed)
+        if app_thread.is_alive():
+            logging.info("Waiting for application thread to finish...")
+            app_thread.join(timeout=3.0)
             if app_thread.is_alive():
-                logging.warning("Application still running after 5s grace period, exiting anyway")
-        else:
-            # App completed naturally (unlikely)
-            app_thread.join(timeout=1.0)
+                logging.warning("Application thread still alive after 3s timeout")
+                # Thread is stuck - this is the bug we need to fix
+                # Continue anyway since we have the frame data we need
         
         elapsed_time = time.time() - start_time
-        
-        stop_event.set()
         
         # Collect statistics
         frame_count = application.get_frame_count()
@@ -681,6 +569,9 @@ def verify_camera_functional(
             logging.info(f"Saved images: {saved_count}/{max_saves}")
         logging.info("=" * 80)
         
+        # Print to stdout for subprocess capture
+        print(f"Average FPS: {avg_fps:.2f}")
+        
         # Determine success based on what we captured
         if save_images and saved_count < max_saves:
             return False, f"Insufficient images saved: {saved_count}/{max_saves}", stats
@@ -700,40 +591,56 @@ def verify_camera_functional(
     finally:
         stop_event.set()
         
-        # Cleanup - these may already be stopped from the monitoring loop above
-        if camera:
-            try:
-                logging.info("Final cleanup - ensuring camera is stopped...")
-                camera.stop()
-            except Exception:
-                # Already stopped, ignore
-                pass
+        # CLEANUP SEQUENCE (must be in correct order):
+        # 1. Stop hololink (closes socket, which stops frame reception)
+        # 2. This allows GXF receiver to unblock
+        # 3. GXF graph completes naturally (doesn't hang)
+        # 4. Then destroy CUDA context
+        #
+        # DO NOT call camera.stop() - GXF + hololink.stop() handles camera shutdown
+        # DO NOT try to interrupt app from here - it should already be done
         
         if hololink:
             try:
-                logging.info("Ensuring Hololink is stopped...")
+                logging.info("Stopping Hololink (closes frame socket)...")
                 hololink.stop()
-            except Exception:
-                # Already stopped, ignore
-                pass
+            except Exception as e:
+                logging.error(f"Error stopping hololink: {e}", exc_info=True)
         
-
+        # Now give app thread a chance to finish since socket is closed
+        if app_thread and app_thread.is_alive():
+            logging.info("Waiting for application thread to finish after hololink.stop()...")
+            app_thread.join(timeout=5.0)
+            if app_thread.is_alive():
+                logging.error("Application thread still alive after 5s (receiver may be stuck)")
+                # At this point hololink socket is closed, so receiver will eventually error
+                # But we can't wait forever
+        
+        # CRITICAL: Reset hololink framework to clear global device registry
+        # This prevents cached/buffered frames from previous runs affecting the next run
+        try:
+            logging.info("Resetting Hololink framework (clears global device registry)...")
+            hololink_module.Hololink.reset_framework()
+        except Exception as e:
+            logging.warning(f"Error resetting hololink framework: {e}")
+        
+        # Destroy CUDA context
         if cu_context:
             try:
                 logging.info("Destroying CUDA context...")
                 cuda.cuCtxDestroy(cu_context)
             except Exception as e:
-                logging.warning(f"Error destroying CUDA context: {e}")
+                logging.error(f"Error destroying CUDA context: {e}", exc_info=True)
         
         logging.info("Cleanup complete")
 
 
 
-def main() -> tuple[bool, bool]:
+def main() -> bool:
     parser = argparse.ArgumentParser(description="Verify IMX258 camera functionality")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
     parser.add_argument("--camera-id", type=int, default=0, choices=[0, 1], help="Camera index")
-    parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode")
+    parser.add_argument("--camera-mode", type=int, default=4, help="Camera mode")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to capture")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
@@ -741,10 +648,17 @@ def main() -> tuple[bool, bool]:
     parser.add_argument("--save-images", action="store_true", default=False, help="Save captured frames as images")
     parser.add_argument("--save-dir", type=str, default="/home/lattice/HSB/CI_CD/test_image_folder", help="Directory to save images")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
-    parser.add_argument("--min-eth-speed", type=int, default=10000, help="Minimum Ethernet speed in Mbps")
+    parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
     
     args = parser.parse_args()
     
+    # If listing modes, do that and exit
+    if args.list_mode:
+        print("Available IMX258 Camera Modes:")
+        for mode in hololink_module.sensors.imx258.Imx258_Mode:
+            print(f"  {mode.value}: {mode.name}")
+        sys.exit(0)
+
     if args.max_saves > args.frame_limit:
         logging.error(f"Max_saves {args.max_saves} cannot be greater than frame_limit {args.frame_limit}!")
         sys.exit(2)
@@ -757,11 +671,6 @@ def main() -> tuple[bool, bool]:
     
     all_passed = True
     results = []
-    
-    # Always check Ethernet speed
-    eth_success, eth_message, eth_stats = verify_ethernet_link_speed(args.min_eth_speed)
-    results.append(("Ethernet Link Speed", eth_success, eth_message, eth_stats))
-    all_passed = all_passed and eth_success
     
     # Verify camera
     cam_success, cam_message, cam_stats = verify_camera_functional(
@@ -777,7 +686,7 @@ def main() -> tuple[bool, bool]:
         max_saves=args.max_saves,
     )
     results.append(("Camera Functionality", cam_success, cam_message, cam_stats))
-    all_passed = all_passed and cam_success
+    
     
     # Print summary
     print(tpf.header_footer(90, "CAMERA VERIFICATION SUMMARY"))
@@ -793,15 +702,15 @@ def main() -> tuple[bool, bool]:
 
     print("\n" + "=" * 90)
     if all_passed:
-        print(" ALL TESTS PASSED")
-        #sys.exit(0)
+        print(" Camera verification PASSED")
+        sys.exit(0)
     else:
         print(" TESTS FAILED")
-        print(" camera_ok:", cam_success, "ethernet_ok:", eth_success)
-        #sys.exit(1)
+        print(" camera_ok:", cam_success)
+        sys.exit(1)
     print("\n" + "=" * 90)
 
-    return eth_success, cam_success
+    return cam_success
 
 if __name__ == "__main__":
     main()

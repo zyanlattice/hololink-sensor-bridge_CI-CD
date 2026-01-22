@@ -3,8 +3,16 @@ import os
 import argparse
 import sys
 import time
+from pathlib import Path
+from datetime import datetime
+
+# Add parent scripts directory to path for imports
+_script_dir = Path(__file__).parent.parent / "scripts"
+sys.path.insert(0, str(_script_dir))
+
 import control_tapo_kasa
 import verify_camera_imx258
+import verify_eth_speed
 import terminal_print_formating as tpf
 
 def parse_args() -> argparse.Namespace:
@@ -19,10 +27,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def get_curr_path() -> str:
-    return os.path.dirname(os.getcwd())
+    """Get the directory of the current script."""
+    return str(Path(__file__).parent)
 
 def get_parent_path() -> str:
-    return os.path.dirname(get_curr_path())
+    """Get the parent directory of the current script."""
+    return str(Path(__file__).parent.parent)
+
+def create_results_dir() -> Path:
+    """Create timestamped results directory."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_dir = Path(__file__).parent.parent / "results" / f"eth_rem_programming_{timestamp}"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return results_dir
 
 def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     docker_ok = True
@@ -32,6 +49,10 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     os.system('cls' if os.name == 'nt' else 'clear')
     #tpf.print_img2char("/home/lattice/HSB/CI_CD/images/Lattice_Logo_Color_TransparentBG.png")
     tpf.print_start()
+
+    # Create timestamped results directory
+    results_dir = create_results_dir()
+    print(f"[INFO] Results will be saved to: {results_dir}")
 
     args = parse_args()
  
@@ -44,23 +65,11 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     fpga_uuid = args.fpga_uuid 
     peer_ip = args.peer_ip 
     max_saves = args.max_saves
-    # bitstream_path = args.bitstream_path if args.bitstream_path else os.getenv("BITSTREAM_PATH")
-    # version = args.version if args.version else os.getenv("VERSION")
-    # md5 = args.md5 if args.md5 else os.getenv("MD5")
-    # manifest = args.manifest if args.manifest else os.getenv("MANIFEST")
-    # fpga_uuid = args.fpga_uuid if args.fpga_uuid else os.getenv("FPGA_UUID")
-    # peer_ip = args.peer_ip if args.peer_ip else os.getenv("PEER_IP")
 
     fpga_ok = False
     manifest_ok = False
     bitstream_ok = False
 
-    # Validate after checking both sources (args and env vars)
-    # missing = [name for name, val in (("--bitstream-path/BITSTREAM_PATH", bitstream_path), ("--version/VERSION", version), ("--md5/MD5", md5)) if not val]
-    # if missing:
-    #     print("Exception thrown: Missing required parameters: " + ", ".join(missing))
-    #     print("Provide via command-line arguments or environment variables.")
-    #     raise SystemExit(2)
 
     if not md5:  # Checks both None and empty string
         missing = [name for name, val in (("--bitstream-path", bitstream_path), ("--version", version)) if not val]
@@ -72,14 +81,12 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
         raise SystemExit(2)
     
     
-    from read_metadata import search_metadata_value
-    import generate_manifest_md5
-
     if ((fpga_uuid is None) or (len(fpga_uuid) < 1)) and (peer_ip is None):
         print("Exception thrown: At least one --fpga-uuid or --peer-ip must be specified.")
         raise SystemExit(2)
     if (peer_ip is not None) and ((fpga_uuid is  None) or (len(fpga_uuid) < 1)):
         # Query the device for its FPGA UUID
+        from read_metadata import search_metadata_value
         uuid = search_metadata_value(peer_ip, "fpga_uuid")
         if uuid is None:
             print(f"Exception thrown: Unable to query FPGA UUID from device at {peer_ip}. Please check connectivity and try again.")
@@ -94,6 +101,8 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     ori_argv = sys.argv.copy()
 
     print("Generating manifest file... ")
+    from generate_manifest_md5 import main as generate_manifest_main
+    
     sys.argv = ([
         "generate_manifest_md5.py", # argv[0] - script name required
         "--version", version,
@@ -105,14 +114,23 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
         sys.argv.extend(["--md5", md5])
     if manifest:
         sys.argv.extend(["--manifest", manifest])
-    tmp, bitstream_ok = generate_manifest_md5.main()
+    tmp, bitstream_ok = generate_manifest_main()
     
     sys.argv = ori_argv
 
     manifest_file = manifest if manifest else "new_manifest.yaml"
-    manifest_path = os.path.join("/home/lattice/HSB/CI_CD/scripts", manifest_file)
+    # Check original location first
+    original_manifest_path = os.path.join(Path.cwd(), manifest_file)
+    manifest_path = os.path.join(str(results_dir), manifest_file)
+    
     time.sleep(0.2)  # wait for file system to catch up
 
+    # If manifest was generated in original location, move it to results directory
+    if os.path.isfile(original_manifest_path):
+        import shutil
+        shutil.move(original_manifest_path, manifest_path)
+        print(f"Manifest file moved to results directory: {manifest_path}")
+    
     if not os.path.isfile(manifest_path):
         print(f"Exception thrown: Manifest file {manifest_path} not found.")
         raise SystemExit(2)
@@ -161,7 +179,8 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     sys.argv = [
         "verify_camera_imx258.py",
         "--camera-ip", peer_ip,
-        "--max-saves", str(max_saves)
+        "--max-saves", str(max_saves),
+        "--save-dir", str(results_dir)
     ]
     
     # Only add --save-images flag if max_saves > 0
@@ -172,11 +191,22 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     ethspeed_ok = False
     camera_ok = False
 
-    ethspeed_ok, camera_ok = verify_camera_imx258.main()
+    camera_ok = verify_camera_imx258.main()
+
+    # Always restore argv before calling a new script
+    sys.argv = ori_argv.copy()
     
+    print("Running quick functional test...")
+    sys.argv = [
+        "verify_eth_speed.py",
+        "--camera-ip", peer_ip
+    ]
+
+    ethspeed_ok = verify_eth_speed.main()[0]
 
     tpf.print_end()
     print("Bitstream programmer wrapper script completed.")
+    print(f"\n[INFO] All results saved to: {results_dir}")
 
     return docker_ok, bitstream_ok, fpga_ok, manifest_ok, program_success, powercycle_ok, ethspeed_ok, camera_ok
 

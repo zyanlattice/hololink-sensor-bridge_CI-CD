@@ -1,0 +1,14 @@
+cable:
+  name: USB2
+  port: FTUSB-0
+  usb_id: Dual R232-HS A Location 22321 Serial A
+device:
+  family: LFCPNX
+  idcode: '0x010f4043'
+  name: LFCPNX-100
+options:
+  tck_delay: 3
+  timeout: 300
+radiant:
+  programmer_path: c:\lscc\radiant\2025.2\programmer\bin\nt64\pgrcmd.exe
+  version: '2025.2'

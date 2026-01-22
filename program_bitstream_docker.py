@@ -12,6 +12,9 @@ import platform
 from pathlib import Path
 from typing import List, Optional
 
+# Add parent scripts directory to path for imports
+_script_dir = Path(__file__).parent.parent / "eth_program_bitstream"
+sys.path.insert(0, str(_script_dir))
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -156,8 +159,8 @@ def build_docker_command(
     
     # Command to run inside container - directly call Python script
     python_cmd = (
-        f"cd /home/lattice/HSB/CI_CD/scripts && "
-        f"python3 bitstream_programmer_wrapper.py "
+        f"cd /home/lattice/HSB/CI_CD/eth_program_bitstream && "
+        f"python3 eth_prog_wrapper.py "
         f"--version '{args.version}' "
         f"--bitstream-path '{args.bitstream_path}' "
         f"--peer-ip '{args.peer_ip}' "

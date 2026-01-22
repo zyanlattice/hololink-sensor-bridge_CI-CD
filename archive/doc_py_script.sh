@@ -28,7 +28,7 @@ cd /home/lattice/HSB/CI_CD
 
 # Run the Python script with the values from environment variables
 if [[ -n "$manifest" ]]; then
-  python3 scripts/bitstream_programmer_wrapper.py \
+  python3 eth_program_bitstream/eth_prog_wrapper.py \
     --bitstream-path "$bitstream_path" \
     --version "$version" \
     --md5 "$md5" \
@@ -36,7 +36,7 @@ if [[ -n "$manifest" ]]; then
     --max-saves "$max_saves" \
     --manifest "$manifest"
 else
-  python3 scripts/bitstream_programmer_wrapper.py \
+  python3 eth_program_bitstream/eth_prog_wrapper.py \
     --bitstream-path "$bitstream_path" \
     --version "$version" \
     --md5 "$md5" \

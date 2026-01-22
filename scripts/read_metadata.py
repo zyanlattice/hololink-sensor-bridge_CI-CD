@@ -223,7 +223,7 @@ def main() -> None:
             print(val)
         return
 
-    def emit(sn: str, meta: Dict[str, Any]):
+    def emit(sn: str, meta: Dict[str, Any]) -> Dict[str, Any]:
         if args.flatten:
             meta_out = flatten(meta)
         else:
@@ -251,6 +251,8 @@ def main() -> None:
             # serial number is part of metadata; avoid redundant header
             print_metadata_table(f"serial number: {sn}", filtered, show_serial_header=False)
 
+        return filtered
+
     if args.list or not args.peer_ip:
         devices: Dict[str, Dict[str, Any]] = {}
 
@@ -273,8 +275,14 @@ def main() -> None:
             sys.exit(0)
 
         for sn, meta in devices.items():
-            emit(sn, meta)
-        return
+            res_dict = emit(sn, meta)
+
+            
+            res_ok = True if res_dict.get("fpga_uuid") is not None else False 
+            res_ok = res_ok and (True if res_dict.get("hif_address") is not None else False)
+            
+
+        return res_ok
 
     # Query a specific device by IP
     try:
@@ -283,10 +291,16 @@ def main() -> None:
             raise RuntimeError("Enumerator.find_channel returned empty metadata")
         sn = meta.get("serial_number") or "<unknown>"
         emit(sn, meta)
+
+        
+
+        return res_ok
+
     except Exception as e:
         print(f"Failed to read metadata: {e}", file=sys.stderr)
         sys.exit(2)
 
 
 if __name__ == "__main__":
-    main()
+    res = main()
+    print(f"Metadata read result: {res}")
