@@ -1,0 +1,55 @@
+
+{
+  "run_id": "2026-01-26_13-05-17_ab12cd",
+  "timestamp": "2026-01-26T13:05:17Z",
+  "env": {
+    "orin_image": "r36.3",
+    "fpga_bitstream": "hsb_20260125_01",
+    "git_sha": "ab12cd3",
+    "branch": "feature/hsb-jitter",
+    "dataset": "camA_1080p60"
+  },
+  "summary": {
+    "status": "pass",
+    "yield_rate": 0.975,
+    "total_tests": 40,
+    "passed": 39,
+    "failed": 1,
+    "notes": "minor jitter spikes at start"
+  },
+  "tests": [
+    {
+      "name": "frame_gap_jitter",
+      "status": "pass",
+      "duration_ms": 12850.3,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.4,
+        "frame_gap_ms_p99": 18.1,
+        "drops": 0
+      },
+      "artifacts": [
+        {"type":"png","path":"frames/fg_hist.png","label":"Frame gap histogram"}
+      ]
+    },
+    {
+      "name": "end_to_end_latency",
+      "status": "fail",
+      "duration_ms": 30123.5,
+      "metrics": {
+        "latency_ms_mean": 24.1,
+        "latency_ms_p95": 35.7,
+        "latency_ms_p99": 48.9
+      },
+      "error_message": "p99 exceeded 45 ms threshold"
+    }
+  ],
+  "timeseries": [
+    {
+      "name": "frame_gap_ms",
+      "path": "metrics/frame_gap_ms.parquet",
+      "count": 18000,
+      "meta": {"source":"orchestrator","unit":"ms"}
+    }
+  ]
+}

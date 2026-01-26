@@ -133,6 +133,54 @@ class ImageSaverOp(holoscan.core.Operator):
         except Exception as e:
             logging.error(f"Failed to save frame: {e}", exc_info=True)
 
+class ScreenShotOp(holoscan.core.Operator):
+    """Operator to save frames as images."""
+    
+    def __init__(self, *args, save_dir="/tmp/camera_verification", max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.save_dir = save_dir
+        self.max_saves = max_saves
+        self.saved_count = 0
+        self.frames_to_save = frames_to_save or []  # List of frame numbers to save
+        self.current_frame = 0  # Track which frame we're on
+        self.app = app
+        self.camera = camera  # ← Add camera reference
+        self.hololink = hololink  # ← Add hololink reference
+        self.save_images = save_images
+        os.makedirs(save_dir, exist_ok=True)
+        
+    def setup(self, spec):
+        spec.input("input")
+        
+    def compute(self, op_input, op_output, context):
+        in_message = op_input.receive("input")
+        self.current_frame += 1
+        
+        # Check if this frame should be saved
+        if self.current_frame not in self.frames_to_save:
+            return  # Don't save this frame
+        
+        if self.saved_count >= self.max_saves:
+            return  # Already saved enough
+        
+        from PIL import ImageGrab
+        try:
+            
+            timestamp = time.time()
+            filename = os.path.join(self.save_dir, f"frame_{self.current_frame:04d}_{timestamp:.3f}.png")
+            
+            
+            screenshot = ImageGrab.grab()
+            screenshot_path = filename
+            screenshot.save(screenshot_path)
+            logging.info(f"Saved HolovizOp screenshot: {screenshot_path}")
+
+            self.saved_count += 1
+
+        except Exception as e:
+            logging.warning(f"Could not capture screenshot: {e}")
+
+
 class FrameCounterOp(holoscan.core.Operator):
     """Operator to count received frames and track timestamps."""
     
@@ -182,11 +230,55 @@ class FrameCounterOp(holoscan.core.Operator):
 
         # Frame counting complete - CountCondition will stop graph after frame_limit
 
+    def calculate_frame_gaps(self, expected_fps=60.0):
+        """
+        Calculate frame gaps/dropped frames based on timestamp analysis.
+        
+        Args:
+            expected_fps: Expected frames per second (default 60)
+        
+        Returns:
+            dict with gap statistics
+        """
+        if len(self.timestamps) < 2:
+            return {
+                "max_gap_ms": 0,
+                "avg_gap_ms": 0,
+                "num_large_gaps": 0,
+                "dropped_frames_estimate": 0
+            }
+        
+        expected_interval = 1.0 / expected_fps  # seconds between frames
+        
+        # Calculate intervals between consecutive frames
+        intervals = [self.timestamps[i+1] - self.timestamps[i] 
+                    for i in range(len(self.timestamps) - 1)]
+        
+        # Find gaps (convert to ms for readability)
+        gaps_ms = [interval * 1000 for interval in intervals]
+        expected_interval_ms = expected_interval * 1000
+        
+        # Gaps larger than 1.5x expected interval indicate dropped frames
+        large_gaps = [g for g in gaps_ms if g > expected_interval_ms * 1.5]
+        
+        # Estimate dropped frames (gap / expected_interval)
+        max_gap = max(gaps_ms) if gaps_ms else 0
+        dropped_estimate = sum((g / expected_interval_ms - 1) for g in large_gaps)
+        
+        return {
+            "max_gap_ms": round(max_gap, 2),
+            "avg_gap_ms": round(sum(gaps_ms) / len(gaps_ms), 2),
+            "num_large_gaps": len(large_gaps),
+            "dropped_frames_estimate": int(dropped_estimate),
+            "expected_interval_ms": round(expected_interval_ms, 2)
+        }
+
 class VerificationApplication(holoscan.core.Application):
     """Headless application for quick functional verification."""
     
     def __init__(
         self,
+        headless,
         cuda_context,
         cuda_device_ordinal,
         hololink_channel,
@@ -198,9 +290,12 @@ class VerificationApplication(holoscan.core.Application):
         save_dir="/tmp/camera_verification",
         max_saves=5,
         frames_to_save=None,
+        fullscreen=False,
     ):
         super().__init__()
         self._cuda_context = cuda_context
+        self._headless = headless
+        self._fullscreen = fullscreen
         self._cuda_device_ordinal = cuda_device_ordinal
         self._hololink_channel = hololink_channel
         self._camera = camera
@@ -262,7 +357,7 @@ class VerificationApplication(holoscan.core.Application):
         
         self.add_flow(receiver_operator, csi_to_bayer_operator, {("output", "input")})
         
-        if self._save_images:
+        if self._save_images and not self._fullscreen:
 
             pixel_format = self._camera.pixel_format()
             bayer_format = self._camera.bayer_format()
@@ -292,6 +387,15 @@ class VerificationApplication(holoscan.core.Application):
                 interpolation_mode=0,
             )
             
+            # Simple frame counter for stats only - no stop logic needed
+            self._frame_counter = FrameCounterOp(
+                self, 
+                name="frame_counter",
+                frame_limit=self._frame_limit,
+                pass_through=True
+            )
+            
+        
             self._image_saver = ImageSaverOp(
                 self,
                 name="image_saver",
@@ -302,19 +406,80 @@ class VerificationApplication(holoscan.core.Application):
                 camera=self._camera,  # ← Pass camera
                 hololink=self._hololink  # ← Pass hololink
             )
+                     
+
+            self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
+            self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
+            self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
+            self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
+
+        elif self._fullscreen:
+            pixel_format = self._camera.pixel_format()
+            bayer_format = self._camera.bayer_format()
+
+            image_processor_operator = hololink_module.operators.ImageProcessorOp(
+                self,
+                name="image_processor",
+                optical_black=50,  # IMX258 optical black value
+                bayer_format=bayer_format.value,
+                pixel_format=pixel_format.value,
+            )
+
+            rgba_components_per_pixel = 4
+            rgb_pool = holoscan.resources.BlockMemoryPool(
+                self,
+                name="rgb_pool",
+                storage_type=1,
+                block_size=self._camera._width 
+                * self._camera._height 
+                * rgba_components_per_pixel
+                * ctypes.sizeof(ctypes.c_uint16),  # RGA8888
+                num_blocks=2,
+            )
             
-            # Simple frame counter for stats only - no stop logic needed
+            bayer_to_rgb_operator = BayerDemosaicOp(
+                self,
+                name="bayer_to_rgb",
+                pool=rgb_pool,
+                generate_alpha=True,
+                alpha_value=65535,
+                bayer_grid_pos=bayer_format.value,
+                interpolation_mode=0,
+            )
+            
             self._frame_counter = FrameCounterOp(
                 self, 
                 name="frame_counter",
                 frame_limit=self._frame_limit,
                 pass_through=True
             )
-            
+
+            self._image_saver = ScreenShotOp(
+                self,
+                name="image_saver",
+                save_dir=self._save_dir,
+                max_saves=self._max_saves,
+                frames_to_save=self._frames_to_save,
+                app=self,
+                camera=self._camera,  # ← Pass camera
+                hololink=self._hololink  # ← Pass hololink
+            )
+
+            visualizer = holoscan.operators.HolovizOp(
+                self,
+                name="holoviz",
+                fullscreen=self._fullscreen,
+                headless=self._headless,
+                framebuffer_srgb=True,
+            )
+
             self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
             self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
             self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
-            self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
+            self.add_flow(self._frame_counter, visualizer, {("output", "receivers")})
+            if self._save_images:
+                self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
+
         else:
             # Simple frame counter for stats only
             self._frame_counter = FrameCounterOp(
@@ -339,6 +504,12 @@ class VerificationApplication(holoscan.core.Application):
         """Get the number of images saved."""
         return self._image_saver.saved_count if self._image_saver else 0
     
+    def get_frame_gap_stats(self, ex_fps=60.0) -> dict:
+        """Get frame gap statistics from the frame counter."""
+        if not self._frame_counter:
+            return {}
+        return self._frame_counter.calculate_frame_gaps(expected_fps=ex_fps)
+    
     def interrupt(self):
         try:
             if hasattr(super(), 'interrupt'):
@@ -348,6 +519,7 @@ class VerificationApplication(holoscan.core.Application):
 
 
 def verify_camera_functional(
+    holoviz: bool = False,
     camera_ip: str = "192.168.0.2",
     camera_id: int = 0,
     camera_mode: int = 0,
@@ -363,6 +535,7 @@ def verify_camera_functional(
     Verify camera functionality after bitstream programming.
     
     Args:
+        holoviz: Whether to run with holoviz (GUI)
         camera_ip: IP address of the Hololink device
         camera_id: Camera index (0 or 1)
         camera_mode: Camera mode (see Imx258_Mode enum)
@@ -436,8 +609,11 @@ def verify_camera_functional(
         camera = hololink_module.sensors.imx258.Imx258(hololink_channel, camera_id)
         camera_mode_enum = hololink_module.sensors.imx258.Imx258_Mode(camera_mode)
         
+        headless = not holoviz
+
         # Create application
         application = VerificationApplication(
+            headless,
             cu_context,
             cu_device_ordinal,
             hololink_channel,
@@ -449,6 +625,7 @@ def verify_camera_functional(
             save_dir=save_dir,
             max_saves=max_saves,
             frames_to_save=frames_to_save,
+            fullscreen=holoviz,              # Use fullscreen args as flag if holoviz is enabled
         )
         
         # Start Hololink and camera
@@ -561,13 +738,16 @@ def verify_camera_functional(
             stats["saved_images"] = saved_count
             stats["save_dir"] = save_dir
         
-        logging.info("=" * 80)
-        logging.info(f"Verification complete: {frame_count}/{frame_limit} frames received")
-        logging.info(f"Elapsed time: {elapsed_time:.2f}s")
-        logging.info(f"Average FPS: {avg_fps:.2f}")
-        if save_images:
-            logging.info(f"Saved images: {saved_count}/{max_saves}")
-        logging.info("=" * 80)
+        gap_stats = application.get_frame_gap_stats(ex_fps=60.0)
+        stats.update(gap_stats)
+
+        # logging.info("=" * 80)
+        # logging.info(f"Verification complete: {frame_count}/{frame_limit} frames received")
+        # logging.info(f"Elapsed time: {elapsed_time:.2f}s")
+        # logging.info(f"Average FPS: {avg_fps:.2f}")
+        # if save_images:
+        #     logging.info(f"Saved images: {saved_count}/{max_saves}")
+        # logging.info("=" * 80)
         
         # Print to stdout for subprocess capture
         print(f"Average FPS: {avg_fps:.2f}")
@@ -649,6 +829,7 @@ def main() -> bool:
     parser.add_argument("--save-dir", type=str, default="/home/lattice/HSB/CI_CD/test_image_folder", help="Directory to save images")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
     parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
+    parser.add_argument("--holoviz", action="store_true", help="Run with holoviz (GUI)")
     
     args = parser.parse_args()
     
@@ -674,6 +855,7 @@ def main() -> bool:
     
     # Verify camera
     cam_success, cam_message, cam_stats = verify_camera_functional(
+        holoviz=args.holoviz,
         camera_ip=args.camera_ip,
         camera_id=args.camera_id,
         camera_mode=args.camera_mode,

@@ -153,9 +153,15 @@ class FrameCounterOp(holoscan.core.Operator):
         #logging.info(f"DEBUG PTP: First 10 PTP timestamps (seconds): {valid_ptp_timestamps[:10]}")
         #logging.info(f"DEBUG PTP: Last 10 PTP timestamps (seconds): {valid_ptp_timestamps[-10:]}")
         
+        fail_cnt = 0
+
         # Calculate inter-frame intervals using PTP timestamps (FPGA time, not host time)
         ptp_intervals = [valid_ptp_timestamps[i+1] - valid_ptp_timestamps[i] for i in range(len(valid_ptp_timestamps) - 1)]
         
+        for intv in ptp_intervals:
+            if intv*1000 >= 20 * 1.05:  # 20 ms expected, allow 5% tolerance
+                fail_cnt += 1
+
         # Debug: log intervals
         #logging.info(f"DEBUG PTP: First 10 intervals (seconds): {ptp_intervals[:10]}")
         #logging.info(f"DEBUG PTP: Min interval: {min(ptp_intervals)}, Max interval: {max(ptp_intervals)}")
@@ -179,6 +185,7 @@ class FrameCounterOp(holoscan.core.Operator):
             "min_ptp_interval_s": min_interval,
             "max_ptp_interval_s": max_interval,
             "ptp_jitter_pct": jitter_pct,
+            "interval_fail_count": fail_cnt,
         }
 
 
@@ -387,10 +394,12 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
         if ptp_stats and "error" not in ptp_stats:
             logging.info(f"Holoscan PTP timing analysis (from LinuxReceiverOp metadata):")
             logging.info(f"  Frames with PTP metadata: {ptp_stats['ptp_frames_with_metadata']}/{ptp_stats['frame_count']}")
-            logging.info(f"  Mean PTP inter-frame interval: {ptp_stats['mean_ptp_interval_s']*1000:.6f} ms")
+            logging.info(f"  Min/Max PTP interval: {ptp_stats['min_ptp_interval_s']*1000000:.3f} / {ptp_stats['max_ptp_interval_s']*1000000:.3f} µs")
+            logging.info(f"  Mean PTP inter-frame interval: {ptp_stats['mean_ptp_interval_s']*1000:.6f} ms, Expected: 20 ms")
+            logging.info(f"  PTP interval fail count (> 20ms): {ptp_stats['interval_fail_count']}")
             logging.info(f"  PTP jitter: {ptp_stats['ptp_jitter_pct']:.6f}%")
             logging.info(f"  PTP std dev: {ptp_stats['stdev_ptp_interval_s']*1000000:.3f} µs (microseconds)")
-            logging.info(f"  Min/Max PTP interval: {ptp_stats['min_ptp_interval_s']*1000000:.3f} / {ptp_stats['max_ptp_interval_s']*1000000:.3f} µs")
+            
             
             if ptp_stats['ptp_jitter_pct'] > 5.0:
                 logging.warning(f"  ⚠️  High PTP jitter detected ({ptp_stats['ptp_jitter_pct']:.2f}%) - FPGA clock may not be stable")

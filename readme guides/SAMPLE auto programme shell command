@@ -1,2 +1,0 @@
-./Program_Bitstream.sh --version 2507 --bitstream-path /home/lattice/HSB/holoscan-sensor-bridge/bitstream/fpga_cpnx_versa_0104_2507.bit --peer-ip 192.168.0.2 --md5 7aad2f1676e08b54a4938306dcb7e437 --manifest programmer_manifest.yaml       
-
