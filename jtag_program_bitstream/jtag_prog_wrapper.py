@@ -62,6 +62,7 @@ class JTAGProgrammerWrapper:
         bitstream_path: str,
         operation: str = "Erase,Program,Verify",
         config: Optional[str] = None,
+        device_type: Optional[str] = None,
         max_retries: int = 3
     ) -> Tuple[bool, str]:
         """
@@ -71,6 +72,7 @@ class JTAGProgrammerWrapper:
             bitstream_path: Path to bitstream file
             operation: Programming operation type
             config: Path to configuration file
+            device_type: Device type ('cpnx' or 'avant')
             max_retries: Maximum retry attempts
             
         Returns:
@@ -89,6 +91,9 @@ class JTAGProgrammerWrapper:
         
         if config:
             cmd.extend(["--config", config])
+        
+        if device_type:
+            cmd.extend(["--device-type", device_type])
         
         if self.verbose:
             cmd.append("--verbose")
@@ -373,19 +378,23 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Program FPGA only
+  # Program CPNX FPGA only
   python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2
+
+  # Program Avant FPGA only
+  python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2 --device-type avant
 
   # Program FPGA and trigger Orin verification
   python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2 \\
-    --version "0104_2507" --orin-ip 192.168.0.3
+    --version "0104_2507" --orin-ip 192.168.0.3 --device-type avant
 
   # Program with fast configuration
-  python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2 --fast
+  python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2 \\
+    --device-type avant --fast
 
   # Verbose mode with all steps
   python jtag_prog_wrapper.py --bitstream bitstream.bit --peer-ip 192.168.0.2 \\
-    --version "0104_2507" --orin-ip 192.168.0.3 --verbose
+    --version "0104_2507" --orin-ip 192.168.0.3 --device-type avant --verbose
         """
     )
     
@@ -402,6 +411,12 @@ Examples:
         default="Erase,Program,Verify",
         choices=["Erase,Program,Verify", "Fast Configuration", "Program,Verify", "Erase,Program"],
         help="Programming operation (default: Erase,Program,Verify)"
+    )
+    parser.add_argument(
+        "--device-type",
+        type=str,
+        choices=["cpnx", "avant"],
+        help="Device type (cpnx=LFCPNX/SRAM, avant=LAV-AT/SPI). Overrides config if provided"
     )
     parser.add_argument(
         "--fast",
@@ -515,6 +530,7 @@ def main() -> Tuple[bool, bool, bool]:
             bitstream_path=args.bitstream,
             operation="Fast Configuration" if args.fast else args.operation,
             config=args.config,
+            device_type=args.device_type,
             max_retries=args.max_retries
         )
         

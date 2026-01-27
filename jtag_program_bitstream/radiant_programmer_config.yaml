@@ -1,14 +1,40 @@
-cable:
-  name: USB2
-  port: FTUSB-0
-  usb_id: Dual R232-HS A Location 22321 Serial A
-device:
-  family: LFCPNX
-  idcode: '0x010f4043'
-  name: LFCPNX-100
+# Device type: 'cpnx' (SRAM, JTAG) or 'avant' (SPI Flash, JTAG2SPI)
+device_type: cpnx
+
+# Device profiles for each board type (includes device-specific cable settings)
+devices:
+  cpnx:
+    family: LFCPNX
+    name: LFCPNX-100
+    idcode: '0x010f4043'
+    communication: JTAG
+    memory_type: SRAM
+    # Cable settings for CPNX
+    cable:
+      name: USB2
+      port: FTUSB-0
+      usb_id: Dual RS232-HS A Location 22321 Serial A
+      
+  avant:
+    family: LAV-AT
+    name: LAV-AT-X70
+    idcode: '0x190a4043'
+    communication: JTAG2SPI
+    memory_type: SPI_FLASH
+    flash_device: MT35XU512
+    flash_address_base: '0x00000000'
+    flash_address_end: '0x00BE0000'
+    flash_device_size: 513
+    # Cable settings for Avant
+    cable:
+      name: USB2
+      port: FTUSB-1
+      usb_id: Dual RS232-HS B Location 22322 Serial B
+
 options:
   tck_delay: 3
   timeout: 300
+
 radiant:
   programmer_path: c:\lscc\radiant\2025.2\programmer\bin\nt64\pgrcmd.exe
   version: '2025.2'
