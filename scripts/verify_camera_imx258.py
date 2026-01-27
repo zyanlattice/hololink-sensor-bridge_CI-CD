@@ -265,12 +265,15 @@ class FrameCounterOp(holoscan.core.Operator):
         max_gap = max(gaps_ms) if gaps_ms else 0
         dropped_estimate = sum((g / expected_interval_ms - 1) for g in large_gaps)
         
+        avg_gap = round(sum(gaps_ms) / len(gaps_ms), 2)
+
         return {
             "max_gap_ms": round(max_gap, 2),
-            "avg_gap_ms": round(sum(gaps_ms) / len(gaps_ms), 2),
+            "avg_gap_ms": avg_gap,
+            "expected_interval_ms": round(expected_interval_ms, 2),
             "num_large_gaps": len(large_gaps),
             "dropped_frames_estimate": int(dropped_estimate),
-            "expected_interval_ms": round(expected_interval_ms, 2)
+            "frame_gap_test_result": "pass" if avg_gap >= expected_interval_ms * 0.75 else "fail"    
         }
 
 class VerificationApplication(holoscan.core.Application):
