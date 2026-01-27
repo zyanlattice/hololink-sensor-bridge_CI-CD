@@ -1,0 +1,86 @@
+{
+  "run_id": "2026-01-26_17-38-50_local",
+  "env": {
+    "orin_image": "r36.3",
+    "fpga_bitstream": "hsb_20260125_01",
+    "git_sha": "ab12cd3",
+    "branch": "feature/test-integration",
+    "dataset": "camA_1080p60"
+  },
+  "timestamp": "2026-01-26T09:38:50.180029+00:00",
+  "schema_version": "2.0",
+  "operator_graph_version": null,
+  "notes": "Integration test report",
+  "tests": [
+    {
+      "name": "frame_gap_jitter",
+      "status": "pass",
+      "duration_ms": 12850.3,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.4,
+        "frame_gap_ms_p99": 18.1,
+        "drops": 0
+      },
+      "error_message": null,
+      "artifacts": [
+        {
+          "type": "png",
+          "path": "fg_hist.png",
+          "label": null,
+          "meta": {}
+        }
+      ],
+      "category": "performance",
+      "tags": [
+        "csi",
+        "raw"
+      ]
+    },
+    {
+      "name": "end_to_end_latency",
+      "status": "fail",
+      "duration_ms": 30123.5,
+      "metrics": {
+        "latency_ms_mean": 24.1,
+        "latency_ms_p95": 35.7,
+        "latency_ms_p99": 48.9
+      },
+      "error_message": "p99 exceeded 45 ms threshold",
+      "artifacts": [],
+      "category": "performance",
+      "tags": []
+    },
+    {
+      "name": "crc_validation",
+      "status": "pass",
+      "duration_ms": 5000.0,
+      "metrics": {
+        "crc_pass_rate": 99.8
+      },
+      "error_message": null,
+      "artifacts": [],
+      "category": "compliance",
+      "tags": []
+    }
+  ],
+  "summary": {
+    "status": "fail",
+    "total_tests": 3,
+    "passed": 2,
+    "failed": 1,
+    "skipped": 0,
+    "yield_rate": 0.6666666666666666,
+    "notes": "Integration test report"
+  },
+  "timeseries": [
+    {
+      "name": "frame_gap_ms",
+      "path": "metrics/frame_gap_ms.parquet",
+      "count": 18000,
+      "meta": {
+        "source": "orchestrator"
+      }
+    }
+  ]
+}

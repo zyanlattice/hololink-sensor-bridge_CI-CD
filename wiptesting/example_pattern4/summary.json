@@ -1,0 +1,96 @@
+{
+  "run_id": "2026-01-26_17-37-35_local",
+  "env": {
+    "orin_image": "r36.3",
+    "fpga_bitstream": "hsb_20260125_01",
+    "git_sha": "ab12cd3",
+    "branch": "main"
+  },
+  "timestamp": "2026-01-26T09:37:35.874849+00:00",
+  "schema_version": "2.0",
+  "operator_graph_version": null,
+  "notes": null,
+  "tests": [
+    {
+      "name": "frame_gap_720p30",
+      "status": "pass",
+      "duration_ms": 12000.0,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.0,
+        "frame_gap_ms_p99": 17.8,
+        "drops": 0
+      },
+      "error_message": null,
+      "artifacts": [],
+      "category": "performance",
+      "tags": [
+        "frame-gap",
+        "720p30"
+      ]
+    },
+    {
+      "name": "frame_gap_1080p30",
+      "status": "pass",
+      "duration_ms": 12000.0,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.1,
+        "frame_gap_ms_p99": 17.9,
+        "drops": 0
+      },
+      "error_message": null,
+      "artifacts": [],
+      "category": "performance",
+      "tags": [
+        "frame-gap",
+        "1080p30"
+      ]
+    },
+    {
+      "name": "frame_gap_1080p60",
+      "status": "fail",
+      "duration_ms": 12000.0,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.4,
+        "frame_gap_ms_p99": 18.1,
+        "drops": 0
+      },
+      "error_message": null,
+      "artifacts": [],
+      "category": "performance",
+      "tags": [
+        "frame-gap",
+        "1080p60"
+      ]
+    },
+    {
+      "name": "frame_gap_2160p30",
+      "status": "pass",
+      "duration_ms": 12000.0,
+      "metrics": {
+        "frame_gap_ms_mean": 16.67,
+        "frame_gap_ms_p95": 17.3,
+        "frame_gap_ms_p99": 18.0,
+        "drops": 0
+      },
+      "error_message": null,
+      "artifacts": [],
+      "category": "performance",
+      "tags": [
+        "frame-gap",
+        "2160p30"
+      ]
+    }
+  ],
+  "summary": {
+    "status": "fail",
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1,
+    "skipped": 0,
+    "yield_rate": 0.75
+  },
+  "timeseries": []
+}
