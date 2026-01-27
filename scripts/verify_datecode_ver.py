@@ -10,8 +10,9 @@ import terminal_print_formating as tpf
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", required=True, type=str, help="Bitstream file version to verify")
+    parser.add_argument("--version", required=True if not "--print" in sys.argv else False, type=str, help="Bitstream file version to verify")
     parser.add_argument("--datecode", type=str, help="Bitstream datecode to verify")
+    parser.add_argument("--print", action="store_true", help="Print retrieved datecode and version")
 
     return parser.parse_args()
 
@@ -51,6 +52,11 @@ def main() -> tuple[bool, bool]:
         
         bitstream_datecode = hololink.get_fpga_date()
         bitstream_version = hololink.get_hsb_ip_version(None,True)
+
+        if args.print:
+            logging.info(f"Retrieved FPGA datecode: {bitstream_datecode:#x} (decimal: {bitstream_datecode})")
+            logging.info(f"Retrieved HSB IP version: {bitstream_version:#x} (decimal: {bitstream_version})")
+            return True, True
 
         # Ensure values are integer (might be returned as string from binding)
         if isinstance(bitstream_datecode, str):
