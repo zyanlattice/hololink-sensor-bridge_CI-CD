@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS runs (
   orin_image TEXT,
   fpga_bitstream TEXT,
   dataset TEXT,
+  operator_graph_version TEXT,
   notes TEXT
 );
 

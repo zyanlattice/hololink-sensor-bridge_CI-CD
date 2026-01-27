@@ -1,7 +1,7 @@
 
 # scripts/ingest_results.py
 import json, sqlite3, pathlib
-from datetime import datetime
+from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
 def ensure_schema(conn):
@@ -29,7 +29,7 @@ def ingest_run(run_dir: str, conn):
     run = pathlib.Path(run_dir)
     run_id = run.name
     # Minimal run metadata
-    meta = {"run_id": run_id, "timestamp": datetime.utcnow().isoformat()}
+    meta = {"run_id": run_id, "timestamp": datetime.now(timezone.utc).isoformat()}
     # Load summary.json if present
     summary = {}
     if (run / "summary.json").exists():

@@ -1,13 +1,13 @@
 {
-  "run_id": "2026-01-26_17-37-35_local",
+  "run_id": "2026-01-27_10-16-22_local",
   "env": {
     "orin_image": "r36.3",
     "fpga_bitstream": "hsb_20260125_01",
-    "git_sha": "ab12cd3",
+    "git_sha": "abc123",
     "branch": "main",
     "dataset": "camA_1080p60"
   },
-  "timestamp": "2026-01-26T09:37:35.863147+00:00",
+  "timestamp": "2026-01-27T02:16:22.199239+00:00",
   "schema_version": "2.0",
   "operator_graph_version": null,
   "notes": null,
@@ -15,7 +15,7 @@
     {
       "name": "frame_gap_jitter",
       "status": "fail",
-      "duration_ms": 12000.0,
+      "duration_ms": 0.0007152557373046875,
       "metrics": {
         "frame_gap_ms_mean": 16.67,
         "frame_gap_ms_p95": 17.4,
@@ -46,15 +46,5 @@
     "skipped": 0,
     "yield_rate": 0.0
   },
-  "timeseries": [
-    {
-      "name": "frame_gap_ms",
-      "path": "metrics/frame_gap_ms.parquet",
-      "count": 18000,
-      "meta": {
-        "source": "orchestrator",
-        "unit": "ms"
-      }
-    }
-  ]
+  "timeseries": []
 }
