@@ -439,11 +439,13 @@ Examples:
     parser.add_argument(
         "--orin-ip",
         type=str,
+        required=True,
         help="IP address of Jetson Orin (triggers Docker verification if provided)"
     )
     parser.add_argument(
         "--peer-ip",
         type=str,
+        default="192.168.0.2",
         help="Hololink device IP address (required if --orin-ip provided)"
     )
     parser.add_argument(
