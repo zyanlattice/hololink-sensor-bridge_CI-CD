@@ -21,7 +21,7 @@ _script_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(_script_dir))
 
 
-from cuda import cuda, cudart
+import cuda.bindings.driver as cuda
 import holoscan
 import hololink as hololink_module
 import datetime
@@ -225,7 +225,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
             logging.warning(f"Failed to get CUDA device: {cu_result}")
             return None
         
-        cu_result, cu_context = cuda.cuCtxCreate(0, cu_device)
+        cu_result, cu_context = cuda.cuDevicePrimaryCtxRetain(cu_device)
         if cu_result != cuda.CUresult.CUDA_SUCCESS:
             logging.warning(f"Failed to create CUDA context: {cu_result}")
             return None
@@ -462,7 +462,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
 def argument_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify IMX258 camera functionality")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
-    parser.add_argument("--camera-mode", type=int, default=4, help="Camera mode")
+    parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to capture")
     
     return parser.parse_args()

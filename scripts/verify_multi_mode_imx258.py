@@ -12,7 +12,7 @@ import time
 import terminal_print_formating as tpf
 
 # Camera modes to test in sequence
-TEST_MODES = [4, 5, 5, 4, 5]
+TEST_MODES = [0, 1, 0, 0, 1]
 
 def run_mode(mode, holoviz=False, camera_ip="192.168.0.2", camera_id=0):
     """

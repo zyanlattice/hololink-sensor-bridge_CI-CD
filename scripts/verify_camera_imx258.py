@@ -17,6 +17,7 @@ IMX258_MODE_1920X1080_60FPS = 0
 import argparse
 import ctypes
 import logging
+import re
 import sys
 import time
 import threading
@@ -27,7 +28,7 @@ import terminal_print_formating as tpf
 
 
 import holoscan
-from cuda import cuda, cudart
+import cuda.bindings.driver as cuda
 from holoscan.operators import BayerDemosaicOp
 from holoscan.resources import UnboundedAllocator
 
@@ -263,7 +264,7 @@ class FrameCounterOp(holoscan.core.Operator):
         
         # Estimate dropped frames (gap / expected_interval)
         max_gap = max(gaps_ms) if gaps_ms else 0
-        dropped_estimate = sum((g / expected_interval_ms - 1) for g in large_gaps)
+        #dropped_estimate = sum((g / expected_interval_ms - 1) for g in large_gaps)
         
         avg_gap = round(sum(gaps_ms) / len(gaps_ms), 2)
 
@@ -272,8 +273,8 @@ class FrameCounterOp(holoscan.core.Operator):
             "avg_gap_ms": avg_gap,
             "expected_interval_ms": round(expected_interval_ms, 2),
             "num_large_gaps": len(large_gaps),
-            "dropped_frames_estimate": int(dropped_estimate),
-            "frame_gap_test_result": "pass" if avg_gap >= expected_interval_ms * 0.75 else "fail"    
+            #"dropped_frames_estimate": int(dropped_estimate),
+            "frame_gap_test_result": "pass" if avg_gap <= expected_interval_ms * 1.2 else "fail"    
         }
 
 class VerificationApplication(holoscan.core.Application):
@@ -593,7 +594,7 @@ def verify_camera_functional(
         if cu_result != cuda.CUresult.CUDA_SUCCESS:
             return False, f"Failed to get CUDA device: {cu_result}", {}
         
-        cu_result, cu_context = cuda.cuCtxCreate(0, cu_device)
+        cu_result, cu_context = cuda.cuDevicePrimaryCtxRetain(cu_device)
         if cu_result != cuda.CUresult.CUDA_SUCCESS:
             return False, f"Failed to create CUDA context: {cu_result}", {}
         
@@ -729,11 +730,30 @@ def verify_camera_functional(
         frame_count = application.get_frame_count()
         avg_fps = application.get_fps()
         
+        def get_cam_mode_name(cam_mode):
+                for mode in hololink_module.sensors.imx258.Imx258_Mode:
+                    if mode.value == cam_mode: 
+                        logging.info(f"Camera mode: {mode.name}")
+                        logging.info(f"Mode number: {mode.value}")
+                        return mode.name
+                logging.warning(f"Unknown camera mode: {cam_mode}")
+                return None
+
+        frame_size = camera._width * camera._height * 10   # RAW10 = 10 bits per pixel
+        mode_name = get_cam_mode_name(int(camera_mode))
+        expected_fps = 0
+        if mode_name:
+            m = re.search(r'_(\d+)\s*fps', str(mode_name), flags=re.IGNORECASE)
+            expected_fps = int(m.group(1)) if m else None
+            logging.info(f"Extracted FPS from camera mode name: {expected_fps}")
+
+
         stats = {
             "frame_count": frame_count,
             "elapsed_time": elapsed_time,
             "avg_fps": avg_fps,
-            "camera_version": version,
+            "expected_fps": expected_fps,
+            "fps_test_result": (test_result := "pass" if (frame_count >= frame_limit * 0.9 and avg_fps >= expected_fps) else "fail"),
         }
         
         if save_images:
@@ -762,9 +782,13 @@ def verify_camera_functional(
         if not save_images and frame_count < frame_limit * 0.9:
             return False, f"Insufficient frames received: {frame_count}/{frame_limit}", stats
         
-        if avg_fps < min_fps and frame_count > 10:  # Only check FPS if we got enough frames
-            return False, f"FPS too low: {avg_fps:.2f} < {min_fps}", stats
+        if avg_fps < expected_fps and frame_count > 10:  # Only check FPS if we got enough frames
+            if gap_stats.get("frame_gap_test_result") == "fail":
+                return False, f"FPS too low: {avg_fps:.2f} < {expected_fps} & Frame gap test failed: avg gap {gap_stats.get('avg_gap_ms')}ms >= {gap_stats.get('expected_interval_ms') * 1.2}", stats
+            return False, f"FPS too low: {avg_fps:.2f} < {expected_fps}", stats
         
+        if gap_stats.get("frame_gap_test_result") == "fail":
+                return False, f"Frame gap test failed: avg gap {gap_stats.get('avg_gap_ms')}ms >= {gap_stats.get('expected_interval_ms') * 1.2}", stats
         return True, "Camera verification passed", stats
         
     except Exception as e:
@@ -823,7 +847,7 @@ def main() -> bool:
     parser = argparse.ArgumentParser(description="Verify IMX258 camera functionality")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
     parser.add_argument("--camera-id", type=int, default=0, choices=[0, 1], help="Camera index")
-    parser.add_argument("--camera-mode", type=int, default=4, help="Camera mode")
+    parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to capture")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
@@ -886,7 +910,7 @@ def main() -> bool:
     
 
     print("\n" + "=" * 90)
-    if all_passed:
+    if cam_success:
         print(" Camera verification PASSED")
         sys.exit(0)
     else:
