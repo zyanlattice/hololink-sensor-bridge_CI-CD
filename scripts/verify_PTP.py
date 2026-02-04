@@ -487,18 +487,26 @@ def main() -> Tuple[bool, str, dict]:
     result = _measure_hololink_ptp(camera_ip=cam_ip, frame_limit=frame_lim, timeout_seconds=15, camera_mode=cam_mode)
     if result is None:
         mean_ptp_int, jitter, std_dev = 0, 0, 0
-    else:
-        mean_ptp_int, jitter, std_dev = result['mean_ptp_interval_s']*1000, result['ptp_jitter_pct'], result['stdev_ptp_interval_s']*1000000
-    if mean_ptp_int is None: 
-        actual_throughput = 0  # Measurement failed
-    
-    stats = {
+        ptp_pass = False
+        stats = {
         "Mean_PTP_Interval_ms": mean_ptp_int,
         "PTP_Jitter_pct": jitter,
         "PTP_Std_Dev_us": std_dev,
-    }
-
-    return True, f"Hololink PTP measurement completed", stats
+        }
+        return ptp_pass, f"Hololink PTP measurement failed", stats
+    else:
+        mean_ptp_int, jitter, std_dev, interval_fail_count = result['mean_ptp_interval_s']*1000, result['ptp_jitter_pct'], result['stdev_ptp_interval_s']*1000000, result['interval_fail_count']
+        ptp_pass = mean_ptp_int <= 20*1.1 and interval_fail_count >= frame_lim * 0.9  # At least 90% of frames within tolerance
+        stats = {
+        "Mean_PTP_Interval_ms": mean_ptp_int,
+        "PTP_Jitter_pct": jitter,
+        "PTP_Std_Dev_us": std_dev,
+        }
+        if ptp_pass:
+            return ptp_pass, f"Hololink PTP measurement passed", stats
+        else:
+            return False, f"Hololink PTP measurement failed: Mean interval {mean_ptp_int:.3f} ms > {20*1.1} ms, Fail frames {interval_fail_count/frame_lim:.2%} ", stats
+    
 
 if __name__ == "__main__":
     success, message, stats = main()

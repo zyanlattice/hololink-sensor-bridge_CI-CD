@@ -437,16 +437,16 @@ Examples:
     
     # Jetson Orin verification arguments
     parser.add_argument(
-        "--orin-ip",
+        "--host-ip",
         type=str,
         required=True,
-        help="IP address of Jetson Orin (triggers Docker verification if provided)"
+        help="IP address of Nvidia Device (triggers Docker verification if provided)"
     )
     parser.add_argument(
         "--peer-ip",
         type=str,
         default="192.168.0.2",
-        help="Hololink device IP address (required if --orin-ip provided)"
+        help="Hololink device IP address (required if --host-ip provided)"
     )
     parser.add_argument(
         "--camera-mode",

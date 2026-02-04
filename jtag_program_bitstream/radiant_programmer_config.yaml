@@ -14,6 +14,14 @@ devices:
       name: USB2
       port: FTUSB-0
       usb_id: Dual RS232-HS A Location 22321 Serial A
+    # Optional SPI Flash settings for JTAG2SPI mode
+    flash_device: W25Q512JV
+    flash_vendor: WinBond
+    flash_idcode: '0x19'
+    flash_package: '8-pad WSON'
+    flash_address_base: '0x00000000'
+    flash_address_end: '0x001D0000'
+    flash_device_size: 513
       
   avant:
     family: LAV-AT

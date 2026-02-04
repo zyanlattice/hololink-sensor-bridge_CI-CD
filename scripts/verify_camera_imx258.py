@@ -784,7 +784,7 @@ def verify_camera_functional(
         
         if avg_fps < expected_fps and frame_count > 10:  # Only check FPS if we got enough frames
             if gap_stats.get("frame_gap_test_result") == "fail":
-                return False, f"FPS too low: {avg_fps:.2f} < {expected_fps} & Frame gap test failed: avg gap {gap_stats.get('avg_gap_ms')}ms >= {gap_stats.get('expected_interval_ms') * 1.2}", stats
+                return False, f"FPS too low: {avg_fps:.2f} < {expected_fps} & Frame gap test failed: avg gap {gap_stats.get('avg_gap_ms')}ms >= {gap_stats.get('expected_interval_ms') * 1.2} ({gap_stats.get('expected_interval_ms')} + 20%)", stats
             return False, f"FPS too low: {avg_fps:.2f} < {expected_fps}", stats
         
         if gap_stats.get("frame_gap_test_result") == "fail":
