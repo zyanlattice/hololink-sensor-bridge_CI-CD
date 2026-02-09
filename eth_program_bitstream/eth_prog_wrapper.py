@@ -141,7 +141,7 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     print("Invoking bitstream programmer...")
     print("The process takes 20 to 30 minutes to complete.")
     prog_start = time.time()
-    #os.system(f"cd /home/lattice/HSB/holoscan-sensor-bridge && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
+    os.system(f"cd /home/lattice/HSB/holoscan-sensor-bridge && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
     prog_end = time.time()
 
     time.sleep(0.2) # soak time

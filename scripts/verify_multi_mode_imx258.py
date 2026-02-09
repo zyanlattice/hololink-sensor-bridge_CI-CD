@@ -6,6 +6,8 @@ Runs verify_camera_imx258.py across multiple camera modes sequentially.
 
 import argparse
 import logging
+import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -13,6 +15,30 @@ import terminal_print_formating as tpf
 
 # Camera modes to test in sequence
 TEST_MODES = [0, 1, 0, 0, 1]
+
+# Find the verify_camera_imx258.py script
+def find_camera_script():
+    """
+    Find verify_camera_imx258.py in the CI_CD/scripts/ folder.
+    Searches upward from current file to find CI_CD root, then looks in scripts/.
+    """
+    current_file = Path(__file__).resolve()
+    
+    # Search upward for CI_CD folder
+    for parent in [current_file.parent] + list(current_file.parents):
+        # Check if we're in CI_CD or a subfolder contains scripts/
+        scripts_dir = parent / "scripts"
+        if scripts_dir.exists() and scripts_dir.is_dir():
+            camera_script = scripts_dir / "verify_camera_imx258.py"
+            if camera_script.exists():
+                return str(camera_script)
+    
+    # Fallback: assume script is in same directory as this file
+    fallback = current_file.parent / "verify_camera_imx258.py"
+    if fallback.exists():
+        return str(fallback)
+    
+    raise FileNotFoundError("Could not find verify_camera_imx258.py in CI_CD/scripts/ folder")
 
 def run_mode(mode, holoviz=False, camera_ip="192.168.0.2", camera_id=0):
     """
@@ -31,8 +57,16 @@ def run_mode(mode, holoviz=False, camera_ip="192.168.0.2", camera_id=0):
     logging.info(f"Starting verification for Camera Mode: {mode}")
     logging.info(f"{'='*80}")
     
+    # Find the camera script dynamically
+    try:
+        camera_script = find_camera_script()
+    except FileNotFoundError as e:
+        logging.error(str(e))
+        return False, str(e)
+    
     cmd = [
-        "python3", "verify_camera_imx258.py",
+        sys.executable,  # Use same Python interpreter as current process
+        camera_script,
         "--camera-mode", str(mode),
         "--camera-ip", camera_ip,
         "--camera-id", str(camera_id),

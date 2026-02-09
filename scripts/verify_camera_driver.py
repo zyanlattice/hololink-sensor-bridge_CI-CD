@@ -46,6 +46,13 @@ def main() -> bool:
     for mode in hololink_module.sensors.imx258.Imx258_Mode:
         print(f"  {mode.value}: {mode.name}")
 
+    # CRITICAL: Reset hololink framework to clear global device registry
+    # This prevents cached/buffered frames from previous runs affecting the next run
+    try:
+        logging.info("Resetting Hololink framework (clears global device registry)...")
+        hololink_module.Hololink.reset_framework()
+    except Exception as e:
+        logging.warning(f"Error resetting hololink framework: {e}")
 
     cam_success = True
 

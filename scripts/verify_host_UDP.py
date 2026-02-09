@@ -79,13 +79,15 @@ def ethernet_loopback_test(
     
     return failed_packets == 0
 
-def main():
+def main()-> bool:
     logging.basicConfig(level=logging.INFO)
     success = ethernet_loopback_test()
     if success:
         logging.info("UDP loopback test completed successfully.")
+        return True
     else:
         logging.error("UDP loopback test failed.")
+        return False
 
 if __name__ == "__main__":
     main()
