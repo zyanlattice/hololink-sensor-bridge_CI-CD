@@ -10,7 +10,7 @@ import pytest
 @pytest.mark.hardware
 @pytest.mark.network
 @pytest.mark.slow
-def test_ethernet_throughput(hololink_device_ip, record_test_result):
+def test_ethernet_throughput(hololink_device_ip, camera_mode, record_test_result):
     """Test actual data throughput from Hololink device."""
     import verify_eth_speed
     import sys
@@ -21,7 +21,7 @@ def test_ethernet_throughput(hololink_device_ip, record_test_result):
         sys.argv = [
             "verify_eth_speed.py",
             "--camera-ip", hololink_device_ip,
-            "--camera-mode", "0",
+            "--camera-mode", str(camera_mode),
             "--frame-limit", "300"
         ]
         

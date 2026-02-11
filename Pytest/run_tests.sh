@@ -12,6 +12,8 @@ NC='\033[0m' # No Color
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# CI/CD root is parent of Pytest folder
+CI_CD_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default configuration
@@ -22,7 +24,7 @@ BITSTREAM_PATH="${BITSTREAM_PATH:-}"
 BITSTREAM_VERSION="${BITSTREAM_VERSION:-}"  # Required - no default
 BITSTREAM_DATECODE="${BITSTREAM_DATECODE:-}"  # Required - no default
 EXPECTED_MD5="${EXPECTED_MD5:-}"
-TEST_REPORT_DIR="test_reports"
+TEST_REPORT_DIR="$CI_CD_ROOT/test_reports"
 HTML_REPORT="test_report_$(date +%Y%m%d_%H%M%S).html"
 
 # Parse command line arguments
@@ -115,7 +117,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --json)
-            EXTRA_ARGS="$EXTRA_ARGS --json-report --json-report-file=test_report_$(date +%Y%m%d_%H%M%S).json"
+            # Enable json_helper.py structured reporting via environment variable
+            export ENABLE_JSON_REPORT=1
             shift
             ;;
         *)
@@ -194,8 +197,14 @@ export PYTHONPATH="${PYTHONPATH}:${SCRIPT_DIR}/../scripts"
 # Create report directory
 mkdir -p "$TEST_REPORT_DIR"
 
-# Create log file name with timestamp
-LOG_FILE="$TEST_REPORT_DIR/pytest_run_$(date +%Y%m%d_%H%M%S).log"
+# Create logs subdirectory with timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TEST_LOG_DIR="$TEST_REPORT_DIR/logs_$TIMESTAMP"
+mkdir -p "$TEST_LOG_DIR"
+LOG_FILE="$TEST_LOG_DIR/pytest_run.log"
+
+# Export TEST_LOG_DIR so pytest can access it
+export TEST_LOG_DIR
 
 # Clear pytest cache to avoid stale test discovery
 echo -e "${YELLOW}Clearing pytest cache...${NC}"
@@ -206,6 +215,9 @@ echo ""
 
 # Build pytest command
 PYTEST_CMD="pytest $VERBOSE"
+
+# Override log file location to put it in the timestamped log directory
+PYTEST_CMD="$PYTEST_CMD -o log_file=$TEST_LOG_DIR/pytest_output.log"
 
 if [[ -n "$MARKERS" ]]; then
     PYTEST_CMD="$PYTEST_CMD -m \"$MARKERS\""
@@ -222,6 +234,72 @@ echo -e "${YELLOW}Running command:${NC}"
 echo "  $PYTEST_CMD"
 echo ""
 
+# Write header for pytest_run.log (console output capture)
+cat > "$LOG_FILE" << EOF
+==================================================================
+Hololink Sensor Bridge - Pytest Execution Log
+==================================================================
+Test Run Information:
+  Date/Time:         $(date '+%Y-%m-%d %H:%M:%S')
+  Log Directory:     $TEST_LOG_DIR
+  Working Directory: $SCRIPT_DIR
+
+Configuration:
+  Hololink IP:       $HOLOLINK_IP
+  Device Type:       $DEVICE_TYPE
+  Camera ID:         $CAMERA_ID
+  Bitstream Path:    ${BITSTREAM_PATH:-not set}
+  Bitstream Version: $BITSTREAM_VERSION
+  Bitstream Datecode:$BITSTREAM_DATECODE
+  Expected MD5:      ${EXPECTED_MD5:-not set}
+
+Test Selection:
+  Markers:           ${MARKERS:-all}
+  Test Files:        ${TEST_FILES:-all}
+  Extra Args:        ${EXTRA_ARGS:-none}
+
+Command:
+  $PYTEST_CMD
+
+==================================================================
+Pytest Output:
+==================================================================
+
+EOF
+
+# Write header for pytest_output.log (pytest internal logging)
+cat > "$TEST_LOG_DIR/pytest_output.log" << EOF
+==================================================================
+Hololink Sensor Bridge - Pytest Debug Log
+==================================================================
+Test Run Information:
+  Date/Time:         $(date '+%Y-%m-%d %H:%M:%S')
+  Log Directory:     $TEST_LOG_DIR
+  Working Directory: $SCRIPT_DIR
+
+Configuration:
+  Hololink IP:       $HOLOLINK_IP
+  Device Type:       $DEVICE_TYPE
+  Camera ID:         $CAMERA_ID
+  Bitstream Path:    ${BITSTREAM_PATH:-not set}
+  Bitstream Version: $BITSTREAM_VERSION
+  Bitstream Datecode:$BITSTREAM_DATECODE
+  Expected MD5:      ${EXPECTED_MD5:-not set}
+
+Test Selection:
+  Markers:           ${MARKERS:-all}
+  Test Files:        ${TEST_FILES:-all}
+  Extra Args:        ${EXTRA_ARGS:-none}
+
+Command:
+  $PYTEST_CMD
+
+==================================================================
+Pytest Debug Logs:
+==================================================================
+
+EOF
+
 # Run tests
 echo -e "${BLUE}==================================================================${NC}"
 echo -e "${BLUE}Starting Tests${NC}"
@@ -230,7 +308,8 @@ echo ""
 
 # Execute pytest
 set +e  # Don't exit on error, we want to process results
-eval $PYTEST_CMD 2>&1 | tee "$LOG_FILE"
+# Use sed to strip ANSI color codes from log file while preserving them on console
+eval $PYTEST_CMD 2>&1 | tee >(sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE")
 EXIT_CODE=${PIPESTATUS[0]}  # Get exit code from pytest, not tee
 set -e
 
@@ -238,15 +317,70 @@ echo ""
 echo -e "${BLUE}==================================================================${NC}"
 if [[ $EXIT_CODE -eq 0 ]]; then
     echo -e "${GREEN}ALL TESTS PASSED${NC}"
+    TEST_RESULT="PASSED"
 else
     echo -e "${RED}SOME TESTS FAILED${NC}"
+    TEST_RESULT="FAILED"
 fi
 echo -e "${BLUE}==================================================================${NC}"
 echo ""
 
+# Write log file footer with summary
+cat >> "$LOG_FILE" << EOF
+
+==================================================================
+Test Run Summary
+==================================================================
+Result:     $TEST_RESULT
+Exit Code:  $EXIT_CODE
+End Time:   $(date '+%Y-%m-%d %H:%M:%S')
+Duration:   Run completed
+
+Reports:
+  Log Directory: $TEST_LOG_DIR
+  Full Log:      $LOG_FILE
+EOF
+
+# Add report file locations if they exist
+if [[ -d "$TEST_REPORT_DIR" ]]; then
+    LATEST_REPORT=$(ls -t "$TEST_REPORT_DIR"/test_results_*.md 2>/dev/null | head -1)
+    if [[ -n "$LATEST_REPORT" ]]; then
+        echo "  Summary:       $LATEST_REPORT" >> "$LOG_FILE"
+    fi
+    
+    LATEST_JSON=$(ls -t "$TEST_REPORT_DIR"/test_results_*.json 2>/dev/null | head -1)
+    if [[ -n "$LATEST_JSON" ]]; then
+        echo "  Details:       $LATEST_JSON" >> "$LOG_FILE"
+    fi
+    
+    # Add structured report if json_helper was used
+    if [[ "$ENABLE_JSON_REPORT" == "1" ]]; then
+        STRUCTURED_REPORT=$(ls -t "$TEST_REPORT_DIR"/structured_report_*.json 2>/dev/null | head -1)
+        if [[ -n "$STRUCTURED_REPORT" ]]; then
+            echo "  Structured:    $STRUCTURED_REPORT" >> "$LOG_FILE"
+        fi
+    fi
+fi
+
+if [[ "$EXTRA_ARGS" == *"--html"* ]]; then
+    echo "  HTML Report:   $HTML_REPORT" >> "$LOG_FILE"
+fi
+
+echo "==================================================================" >> "$LOG_FILE"
+
 # Show report locations
 echo -e "${YELLOW}Reports generated:${NC}"
-echo "  Full Log:  $LOG_FILE"
+echo "  Test Log Dir:  $TEST_LOG_DIR"
+echo "  Full Log:      $LOG_FILE"
+
+# Show structured report if enabled
+if [[ "$ENABLE_JSON_REPORT" == "1" ]] && [[ -d "$TEST_REPORT_DIR" ]]; then
+    STRUCTURED_REPORT=$(ls -t "$TEST_REPORT_DIR"/structured_report_*.json 2>/dev/null | head -1)
+    if [[ -n "$STRUCTURED_REPORT" ]]; then
+        echo "  Structured JSON: $STRUCTURED_REPORT"
+    fi
+fi
+
 if [[ -d "$TEST_REPORT_DIR" ]]; then
     LATEST_REPORT=$(ls -t "$TEST_REPORT_DIR"/test_results_*.md 2>/dev/null | head -1)
     if [[ -n "$LATEST_REPORT" ]]; then

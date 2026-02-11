@@ -9,8 +9,12 @@ import pytest
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
-def test_multi_mode_sequence(hololink_device_ip, camera_id, record_test_result):
+def test_multi_mode_sequence(hololink_device_ip, camera_id, device_type, record_test_result):
     """Test camera across multiple modes in sequence (Mode 0, 1, 0, 0, 1)."""
+    # Skip entire test for cpnx1 devices (only mode 1 supported, no multi-mode testing)
+    if device_type and device_type.lower() == "cpnx1":
+        pytest.skip(f"Skipping multi-mode test for device type {device_type} (only mode 1 supported)")
+    
     # Import the verification script
     import verify_multi_mode_imx258
     import sys

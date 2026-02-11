@@ -9,6 +9,14 @@ from pathlib import Path
 import json
 from datetime import datetime
 
+# Import json_helper for structured test reporting
+try:
+    from json_helper import RunReport, TestEntry, MetricRegistry, Artifact
+    JSON_HELPER_AVAILABLE = True
+except ImportError:
+    JSON_HELPER_AVAILABLE = False
+    print("Warning: json_helper.py not found, using simple JSON reporting")
+
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
@@ -129,6 +137,25 @@ def host_interface():
 
 
 @pytest.fixture(scope="session")
+def camera_mode(device_type):
+    """
+    Camera mode based on device type.
+    - cpnx1: mode 1 (1920x1080 @ 30fps)
+    - all others: mode 0 (1920x1080 @ 60fps)
+    Can be overridden via environment variable CAMERA_MODE.
+    """
+    if os.environ.get("CAMERA_MODE"):
+        return int(os.environ.get("CAMERA_MODE"))
+    
+    # Special case: cpnx1 uses mode 1
+    if device_type and device_type.lower() == "cpnx1":
+        return 1
+    
+    # Default: mode 0
+    return 0
+
+
+@pytest.fixture(scope="session")
 def test_report_dir(ci_cd_root):
     """Directory to store test reports and logs."""
     report_dir = ci_cd_root / "test_reports"
@@ -143,38 +170,140 @@ def test_session_id():
 
 
 @pytest.fixture(scope="session")
-def test_results_file(test_report_dir, test_session_id):
+def test_results_file(save_dir, test_session_id):
     """JSON file to store detailed test results."""
-    results_file = test_report_dir / f"test_results_{test_session_id}.json"
+    results_file = save_dir / f"test_results_{test_session_id}.json"
     return results_file
+
+
+@pytest.fixture(scope="session")
+def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitstream_version, bitstream_datecode):
+    """
+    Session-level RunReport instance for json_helper.py structured reporting.
+    This collects all tests and writes the final JSON report at session end.
+    """
+    if not JSON_HELPER_AVAILABLE:
+        yield None
+        return
+    
+    try:
+        # Create run report with environment metadata
+        report = RunReport(
+            run_id=f"pytest_{test_session_id}",
+            env={
+                "hololink_ip": hololink_device_ip,
+                "device_type": device_type or "unknown",
+                "bitstream_version": bitstream_version or "unknown",
+                "bitstream_datecode": bitstream_datecode or "unknown",
+                "python_version": sys.version,
+                "platform": sys.platform,
+            }
+        )
+    except Exception as e:
+        print(f"\nWarning: Failed to initialize RunReport: {e}")
+        yield None
+        return
+    
+    yield report
+    
+    # At session end, finalize and write report
+    if os.environ.get("ENABLE_JSON_REPORT", "0") == "1":
+        try:
+            report.finalize()
+            output_path = save_dir / f"structured_report_{test_session_id}.json"
+            report.write(save_dir, filename=output_path.name)
+            print(f"\n✓ Structured JSON report: {output_path}")
+        except Exception as e:
+            print(f"\n✗ Failed to write structured report: {e}")
+
+
+@pytest.fixture(scope="session")
+def save_dir(ci_cd_root):
+    """
+    Directory for saving test artifacts (images, logs, etc).
+    Uses TEST_LOG_DIR from run_tests.sh if available, otherwise creates one.
+    """
+    # Try to get from environment (set by run_tests.sh)
+    log_dir = os.environ.get("TEST_LOG_DIR")
+    
+    if log_dir:
+        save_path = Path(log_dir)
+    else:
+        # Fallback: create in test_reports/logs_TIMESTAMP at CI_CD root
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = ci_cd_root / "test_reports" / f"logs_{timestamp}"
+    
+    save_path.mkdir(parents=True, exist_ok=True)
+    return save_path
 
 
 @pytest.fixture(scope="function")
 def record_test_result(test_results_file, request):
     """
-    Fixture to record test results to JSON file.
+    Fixture to record test results.
+    Supports both simple JSON (legacy) and json_helper.py structured reporting.
     Usage: call record_test_result(result_dict) in test.
     """
+    # Get run_report if available, but don't fail if it's not
+    run_report = None
+    try:
+        run_report = request.getfixturevalue('run_report')
+    except:
+        pass
+    
     def _record(result: dict):
-        # Load existing results
-        if test_results_file.exists():
-            with open(test_results_file, 'r') as f:
-                results = json.load(f)
-        else:
-            results = {"tests": []}
+        print(f"\n[DEBUG] record_test_result called for test: {request.node.name}")
+        print(f"[DEBUG] test_results_file: {test_results_file}")
         
-        # Add test metadata
-        result.update({
-            "test_name": request.node.name,
-            "test_file": request.node.fspath.basename,
-            "timestamp": datetime.now().isoformat(),
-        })
+        try:
+            # Simple JSON recording (always enabled for backward compatibility)
+            if test_results_file.exists():
+                print(f"[DEBUG] Loading existing results from {test_results_file}")
+                with open(test_results_file, 'r') as f:
+                    results = json.load(f)
+            else:
+                print(f"[DEBUG] Creating new results file at {test_results_file}")
+                results = {"tests": []}
+            
+            # Add test metadata
+            result.update({
+                "test_name": request.node.name,
+                "test_file": str(request.node.fspath.basename) if hasattr(request.node.fspath, 'basename') else str(request.node.fspath),
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            results["tests"].append(result)
+            
+            # Save simple JSON
+            with open(test_results_file, 'w') as f:
+                json.dump(results, f, indent=2)
+            
+            print(f"✓ Test result recorded to {test_results_file}")
+            
+        except Exception as e:
+            print(f"✗ Failed to record simple JSON: {e}")
         
-        results["tests"].append(result)
-        
-        # Save updated results
-        with open(test_results_file, 'w') as f:
-            json.dump(results, f, indent=2)
+        # Also add to structured report if enabled
+        if JSON_HELPER_AVAILABLE and run_report and os.environ.get("ENABLE_JSON_REPORT", "0") == "1":
+            try:
+                # Extract status from result
+                status = "pass" if result.get("success", False) else "fail"
+                
+                # Create TestEntry
+                test_entry = TestEntry(
+                    name=request.node.name,
+                    status=status,
+                    duration_ms=result.get("duration_ms", 0.0),
+                    metrics=result.get("stats", {}),
+                    error_message=result.get("message") if status == "fail" else None,
+                    category=result.get("category", "functional"),
+                    tags=result.get("tags", [])
+                )
+                
+                run_report.add_test_entry(test_entry)
+                print(f"✓ Test added to structured report")
+            except Exception as e:
+                print(f"✗ Failed to add test to structured report: {e}")
     
     return _record
 
@@ -182,10 +311,73 @@ def record_test_result(test_results_file, request):
 # Pytest hooks for enhanced reporting
 
 def pytest_runtest_makereport(item, call):
-    """Hook to capture test outcomes."""
+    """Hook to capture test outcomes including xfail."""
     if call.when == "call":
         # Store test outcome in item for later access
         item.test_outcome = call.excinfo is None
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Hook to automatically record all test results including xfail."""
+    outcome = yield
+    report = outcome.get_result()
+    
+    # Only process test call phase (not setup/teardown)
+    if report.when == "call":
+        # Get the test_results_file fixture
+        try:
+            test_results_file = item.funcargs.get('test_results_file')
+            if not test_results_file:
+                # Try to get it from session
+                test_results_file = item.session.config._test_results_file
+        except:
+            return
+        
+        # Record the test result
+        try:
+            if test_results_file.exists():
+                with open(test_results_file, 'r') as f:
+                    results = json.load(f)
+            else:
+                results = {"tests": []}
+            
+            # Determine status
+            if report.passed:
+                status = "pass"
+            elif report.failed:
+                status = "fail" 
+            elif report.skipped:
+                status = "xfail" if hasattr(report, 'wasxfail') else "skip"
+            else:
+                status = "unknown"
+            
+            # Create result entry
+            result = {
+                "test_name": item.nodeid,
+                "test_file": str(item.path.name) if hasattr(item, 'path') else str(item.fspath.basename),
+                "timestamp": datetime.now().isoformat(),
+                "success": report.passed,
+                "status": status,
+                "message": str(report.longrepr) if report.failed else status.upper(),
+                "duration_ms": report.duration * 1000,
+            }
+            
+            results["tests"].append(result)
+            
+            # Save
+            with open(test_results_file, 'w') as f:
+                json.dump(results, f, indent=2)
+                
+        except Exception as e:
+            print(f"Warning: Failed to auto-record test result: {e}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_results_file(request, test_results_file):
+    """Store test_results_file in config for hook access."""
+    request.config._test_results_file = test_results_file
+    yield
 
 
 def pytest_sessionfinish(session, exitstatus):

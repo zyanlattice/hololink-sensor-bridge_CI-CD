@@ -10,7 +10,7 @@ import pytest
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
-def test_ptp_latency_analysis(hololink_device_ip, camera_id, record_test_result):
+def test_ptp_latency_analysis(hololink_device_ip, camera_id, camera_mode, record_test_result):
     """Test complete PTP latency analysis (all 5 metrics)."""
     import verify_PTP
     import sys
@@ -20,7 +20,7 @@ def test_ptp_latency_analysis(hololink_device_ip, camera_id, record_test_result)
         sys.argv = [
             "verify_PTP.py",
             "--camera-ip", hololink_device_ip,
-            "--camera-mode", "0",
+            "--camera-mode", str(camera_mode),
             "--frame-limit", "300"
         ]
         

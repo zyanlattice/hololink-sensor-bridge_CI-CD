@@ -33,9 +33,25 @@ def main() -> tuple[bool, bool]:
     
     try:
                 
-        # Find Hololink channel
+        # Find Hololink channel with retry logic (handles device busy from previous tests)
         logging.info(f"Searching for Hololink device at {"192.168.0.2"}...")
-        channel_metadata = hololink_module.Enumerator.find_channel(channel_ip="192.168.0.2")
+        channel_metadata = None
+        max_retries = 3
+        retry_delay = 1.0  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                channel_metadata = hololink_module.Enumerator.find_channel(channel_ip="192.168.0.2")
+                if channel_metadata:
+                    break
+            except RuntimeError as e:
+                if "Interrupted system call" in str(e) and attempt < max_retries - 1:
+                    logging.warning(f"Device busy (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    import time
+                    time.sleep(retry_delay)
+                else:
+                    raise
+        
         if not channel_metadata:
             return False, False
         
