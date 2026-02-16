@@ -144,12 +144,12 @@ def run_enumeration(count: int = 10, timeout: int = 30) -> tuple[bool, List[Dict
         return False, enumerations
 
 
-def main() -> bool:
+def main() -> tuple[bool, str, dict]:
     """
     Main function to run enumeration test.
     
     Returns:
-        True if test passed, False otherwise
+        Tuple of (success: bool, message: str, metrics: dict)
     """
     parser = argparse.ArgumentParser(
         description="Verify Hololink enumeration and basic connectivity by running 'hololink enumerate'"
@@ -181,14 +181,35 @@ def main() -> bool:
     
     args = parser.parse_args()
     
+    # Initialize metrics
+    metrics = {
+        "requested_count": args.count,
+        "timeout_seconds": args.timeout,
+        "expected_ip": args.expected_ip,
+        "enumerations_captured": 0,
+        "unique_devices": 0,
+        "unique_ips": [],
+        "unique_macs": [],
+        "unique_versions": [],
+        "expected_ip_found": False,
+        "elapsed_time_seconds": 0.0,
+    }
+    
     # Setup logging
     logging.basicConfig(
         level=args.log_level,
         format='%(levelname)s: %(message)s'
     )
     
+    # Track timing
+    start_time = time.time()
+    
     # Run enumeration
     success, enumerations = run_enumeration(args.count, args.timeout)
+    
+    # Calculate elapsed time
+    metrics["elapsed_time_seconds"] = round(time.time() - start_time, 2)
+    metrics["enumerations_captured"] = len(enumerations)
     
     # Print summary
     logging.info("=" * 70)
@@ -202,6 +223,12 @@ def main() -> bool:
         unique_macs = set(e.get('mac_id', '') for e in enumerations if e.get('mac_id'))
         unique_versions = set(e.get('hsb_ip_version', '') for e in enumerations if e.get('hsb_ip_version'))
         
+        # Populate metrics
+        metrics["unique_devices"] = len(unique_ips)
+        metrics["unique_ips"] = list(unique_ips)
+        metrics["unique_macs"] = list(unique_macs)
+        metrics["unique_versions"] = list(unique_versions)
+        
         logging.info(f"Unique devices found: {len(unique_ips)}")
         logging.info(f"IP addresses: {', '.join(unique_ips)}")
         logging.info(f"MAC addresses: {', '.join(unique_macs)}")
@@ -210,11 +237,14 @@ def main() -> bool:
         # Verify expected IP
         if args.expected_ip in unique_ips:
             logging.info(f"✓ Expected IP {args.expected_ip} found in enumerations")
+            metrics["expected_ip_found"] = True
         else:
             logging.error(f"✗ Expected IP {args.expected_ip} NOT found in enumerations")
+            metrics["expected_ip_found"] = False
             success = False
     else:
         logging.error("No enumerations captured")
+        metrics["error"] = "No enumerations captured"
         success = False
     
     # Final result
@@ -222,15 +252,21 @@ def main() -> bool:
         logging.info("=" * 70)
         logging.info("✓ Enumeration test PASSED")
         logging.info("=" * 70)
-        return True
+        print(f"\n📊 Metrics: {metrics}")
+        return True, f"Enumeration test passed: {len(enumerations)} enumerations captured", metrics
     else:
         logging.error("=" * 70)
         logging.error("✗ Enumeration test FAILED")
         logging.error("=" * 70)
-        return False
+        if not success:
+            message = f"Enumeration test failed: {metrics.get('error', 'Expected IP not found or insufficient enumerations')}"
+        else:
+            message = f"Enumeration test failed: Only {len(enumerations)}/{args.count} enumerations captured"
+        print(f"\n📊 Metrics: {metrics}")
+        return False, message, metrics
 
 
 if __name__ == "__main__":
-    success = main()
+    success, message, metrics = main()
     sys.exit(0 if success else 1)
 

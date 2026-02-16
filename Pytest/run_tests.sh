@@ -53,7 +53,6 @@ print_usage() {
     echo "  --datecode DATE      Set expected bitstream datecode (e.g., 01053446 or 0x1053446)"
     echo "  --md5 HASH           Set expected MD5 checksum"
     echo "  --html               Generate HTML report"
-    echo "  --json               Generate JSON report"
     echo ""
     echo "Examples:"
     echo "  $0                           # Run all tests"
@@ -62,7 +61,7 @@ print_usage() {
     #echo "  $0 -m 'hardware and not slow' # Hardware tests, skip slow"
     echo "  $0 -t test_device_detection.py # Run specific test file"
     #echo "  $0 --ip 192.168.0.10 -hw     # Hardware tests with custom IP"
-    echo "  $0 --device avant10 --version 0302 --datecode 2511  # Full config"
+    echo "  $0 --device avant10 --version 2511 --datecode 3446  # Full config"
 }
 
 # Parse arguments
@@ -114,11 +113,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --html)
             EXTRA_ARGS="$EXTRA_ARGS --html=$HTML_REPORT --self-contained-html"
-            shift
-            ;;
-        --json)
-            # Enable json_helper.py structured reporting via environment variable
-            export ENABLE_JSON_REPORT=1
             shift
             ;;
         *)

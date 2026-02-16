@@ -19,6 +19,13 @@ def main() -> bool:
     peer_ip = args.peer_ip
     log_level = args.log_level
     
+    # Metrics to track
+    metrics = {
+        "device_found": False,
+        "camera_found": False,
+        "camera_modes_available": 0,
+        "camera_modes_list": [],
+    }
 
         # Setup logging
     logging.basicConfig(
@@ -30,8 +37,10 @@ def main() -> bool:
     logging.info(f"Searching for Hololink device at {peer_ip}...")
     channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=peer_ip)
     if not channel_metadata:
-        return False, f"Failed to find Hololink device at {peer_ip}", {}
+        print(f"\n📊 Metrics: {metrics}")
+        return False, f"Failed to find Hololink device at {peer_ip}", metrics
     
+    metrics["device_found"] = True
     logging.info("Hololink device found")
 
     # Try to find camera
@@ -39,12 +48,20 @@ def main() -> bool:
     logging.info(f"Channel initialized: {hololink_channel}")
     camera = hololink_module.sensors.imx258.Imx258(hololink_channel, 0)
     if not camera:
-        return False, "Failed to find IMX258 camera", {}
+        print(f"\n📊 Metrics: {metrics}")
+        return False, "Failed to find IMX258 camera", metrics
+    
+    metrics["camera_found"] = True
     
     # Print all available camera modes
     print("Available IMX258 Camera Modes:")
+    camera_modes = []
     for mode in hololink_module.sensors.imx258.Imx258_Mode:
         print(f"  {mode.value}: {mode.name}")
+        camera_modes.append(mode.name)
+    
+    metrics["camera_modes_available"] = len(camera_modes)
+    metrics["camera_modes_list"] = camera_modes
 
     # CRITICAL: Reset hololink framework to clear global device registry
     # This prevents cached/buffered frames from previous runs affecting the next run
@@ -55,8 +72,9 @@ def main() -> bool:
         logging.warning(f"Error resetting hololink framework: {e}")
 
     cam_success = True
+    print(f"\n📊 Metrics: {metrics}")
 
-    return cam_success
+    return cam_success, "Camera driver verification passed", metrics
 
 if __name__ == "__main__":
     main()

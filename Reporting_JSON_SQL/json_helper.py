@@ -195,7 +195,7 @@ class TestEntry:
     def __post_init__(self):
         # Normalize status to lowercase
         self.status = self.status.lower()
-        if self.status not in ("pass", "fail", "skip", "partial"):
+        if self.status not in ("pass", "fail", "skip", "partial", "xfail"):
             raise ValueError(f"Invalid status: {self.status}")
 
 
@@ -271,6 +271,7 @@ class RunReport:
         passed = sum(1 for t in self.tests if t.status == "pass")
         failed = sum(1 for t in self.tests if t.status == "fail")
         skipped = sum(1 for t in self.tests if t.status == "skip")
+        xfailed = sum(1 for t in self.tests if t.status == "xfail")
 
         # Determine overall status
         if failed > 0:
@@ -282,7 +283,9 @@ class RunReport:
         else:
             overall_status = "partial"
 
-        yield_rate = (passed / total) if total > 0 else None
+        # Calculate yield rate (passed / total actual tests excluding xfails)
+        actual_tests = total - xfailed
+        yield_rate = (passed / actual_tests) if actual_tests > 0 else None
 
         self.summary = {
             "status": overall_status,
@@ -290,6 +293,7 @@ class RunReport:
             "passed": passed,
             "failed": failed,
             "skipped": skipped,
+            "xfailed": xfailed,
             "yield_rate": yield_rate,
         }
 

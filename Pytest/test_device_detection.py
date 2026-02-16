@@ -5,6 +5,7 @@ Tests Hololink device network detection.
 
 import pytest
 import sys
+from io import StringIO
 
 
 @pytest.mark.hardware
@@ -14,17 +15,37 @@ def test_device_detection(hololink_device_ip, record_test_result):
     # Import the verification script
     import verify_device_detection
     
-    # Run detection
-    detected_interface = verify_device_detection.main(timeout_seconds=10)
+    original_stdout = sys.stdout
     
-    # Record results
-    success = detected_interface is not None
-    message = f"Detected interface: {detected_interface}" if success else "No Hololink device detected"
+    try:
+        # Capture stdout for user visibility
+        captured_output = StringIO()
+        sys.stdout = captured_output
+        
+        try:
+            # verify_device_detection.py returns (success, message, metrics)
+            success, message, metrics = verify_device_detection.main(timeout_seconds=10)
+            
+        except Exception as e:
+            success = False
+            message = f"Device detection failed: {str(e)}"
+            metrics = {"error": str(e)}
+            
+        finally:
+            sys.stdout = original_stdout
+            output_text = captured_output.getvalue()
+            if output_text:
+                print(output_text)
+        
+        record_test_result({
+            "success": success,
+            "message": message,
+            "category": "system_integration",
+            "tags": ["device_detection", "network", "enumeration"],
+            "stats": metrics
+        })
+        
+        assert success, message
     
-    record_test_result({
-        "success": success,
-        "message": message,
-        "stats": {"interface": detected_interface}
-    })
-    
-    assert success, message
+    finally:
+        sys.stdout = original_stdout

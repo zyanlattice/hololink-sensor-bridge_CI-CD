@@ -9,13 +9,18 @@ from pathlib import Path
 import json
 from datetime import datetime
 
-# Import json_helper for structured test reporting
+# Import json_helper for structured test reporting from Reporting_JSON_SQL folder
 try:
+    # Add parent directory to sys.path to access Reporting_JSON_SQL
+    reporting_dir = Path(__file__).parent.parent / "Reporting_JSON_SQL"
+    if str(reporting_dir) not in sys.path:
+        sys.path.insert(0, str(reporting_dir))
+    
     from json_helper import RunReport, TestEntry, MetricRegistry, Artifact
     JSON_HELPER_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     JSON_HELPER_AVAILABLE = False
-    print("Warning: json_helper.py not found, using simple JSON reporting")
+    print(f"Warning: json_helper.py not found in Reporting_JSON_SQL, using simple JSON reporting. Error: {e}")
 
 
 def pytest_configure(config):
@@ -171,16 +176,17 @@ def test_session_id():
 
 @pytest.fixture(scope="session")
 def test_results_file(save_dir, test_session_id):
-    """JSON file to store detailed test results."""
-    results_file = save_dir / f"test_results_{test_session_id}.json"
+    """JSON file to store simplified test results."""
+    results_file = save_dir / f"test_results_simple_{test_session_id}.json"
     return results_file
 
 
 @pytest.fixture(scope="session")
-def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitstream_version, bitstream_datecode):
+def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitstream_version, bitstream_datecode, request):
     """
     Session-level RunReport instance for json_helper.py structured reporting.
     This collects all tests and writes the final JSON report at session end.
+    Always active - generates test_results_{session_id}.json.
     """
     if not JSON_HELPER_AVAILABLE:
         yield None
@@ -197,8 +203,14 @@ def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitst
                 "bitstream_datecode": bitstream_datecode or "unknown",
                 "python_version": sys.version,
                 "platform": sys.platform,
+                "host_platform": os.environ.get("HOST_PLATFORM", "unknown"),
+                "camera_model": os.environ.get("CAMERA_MODEL", "imx258"),
+                "git_sha": os.environ.get("GIT_SHA", None),
+                "branch": os.environ.get("GIT_BRANCH", None)
             }
         )
+        # Store in session for hook access
+        request.config._run_report = report
     except Exception as e:
         print(f"\nWarning: Failed to initialize RunReport: {e}")
         yield None
@@ -207,14 +219,13 @@ def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitst
     yield report
     
     # At session end, finalize and write report
-    if os.environ.get("ENABLE_JSON_REPORT", "0") == "1":
-        try:
-            report.finalize()
-            output_path = save_dir / f"structured_report_{test_session_id}.json"
-            report.write(save_dir, filename=output_path.name)
-            print(f"\n✓ Structured JSON report: {output_path}")
-        except Exception as e:
-            print(f"\n✗ Failed to write structured report: {e}")
+    try:
+        report.finalize()
+        output_path = save_dir / f"test_results_{test_session_id}.json"
+        report.write(save_dir, filename=output_path.name)
+        print(f"\n✓ Structured JSON report: {output_path}")
+    except Exception as e:
+        print(f"\n✗ Failed to write structured report: {e}")
 
 
 @pytest.fixture(scope="session")
@@ -241,136 +252,213 @@ def save_dir(ci_cd_root):
 def record_test_result(test_results_file, request):
     """
     Fixture to record test results.
-    Supports both simple JSON (legacy) and json_helper.py structured reporting.
+    Generates simplified backup test_results_simple.json and adds to structured report.
     Usage: call record_test_result(result_dict) in test.
     """
-    # Get run_report if available, but don't fail if it's not
+    # Get run_report if available
     run_report = None
     try:
         run_report = request.getfixturevalue('run_report')
-    except:
-        pass
+        print(f"[DEBUG] Successfully got run_report fixture: {run_report}")
+    except Exception as e:
+        print(f"[DEBUG] Failed to get run_report fixture: {e}")
+        import traceback
+        traceback.print_exc()
     
     def _record(result: dict):
         print(f"\n[DEBUG] record_test_result called for test: {request.node.name}")
         print(f"[DEBUG] test_results_file: {test_results_file}")
+        print(f"[DEBUG] JSON_HELPER_AVAILABLE: {JSON_HELPER_AVAILABLE}")
+        print(f"[DEBUG] run_report: {run_report}")
         
+        # Extract key info
+        test_name = request.node.name
+        test_file = str(request.node.path.name) if hasattr(request.node, 'path') else str(request.node.fspath.basename)
+        success = result.get("success", False)
+        
+        # Check if test has xfail marker
+        has_xfail = request.node.get_closest_marker('xfail') is not None
+        
+        # Determine status (xfail tests that fail should be recorded as "xfail", not "fail")
+        if success:
+            status = "pass"
+        elif has_xfail:
+            status = "xfail"
+        else:
+            status = "fail"
+        
+        message = result.get("message", status.upper())
+        
+        # Simplified backup test_results_simple.json (Option A)
         try:
-            # Simple JSON recording (always enabled for backward compatibility)
             if test_results_file.exists():
-                print(f"[DEBUG] Loading existing results from {test_results_file}")
                 with open(test_results_file, 'r') as f:
                     results = json.load(f)
             else:
-                print(f"[DEBUG] Creating new results file at {test_results_file}")
-                results = {"tests": []}
+                results = {
+                    "run_id": f"pytest_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    "timestamp": datetime.now().isoformat(),
+                    "tests": []
+                }
             
-            # Add test metadata
-            result.update({
-                "test_name": request.node.name,
-                "test_file": str(request.node.fspath.basename) if hasattr(request.node.fspath, 'basename') else str(request.node.fspath),
+            # Simple standardized entry for backup
+            backup_entry = {
+                "test_name": f"{test_file}::{test_name}",
+                "test_file": test_file,
                 "timestamp": datetime.now().isoformat(),
-            })
+                "status": status,
+                "duration_ms": result.get("duration_ms", 0.0),
+                "success": success,
+                "message": message
+            }
             
-            results["tests"].append(result)
+            results["tests"].append(backup_entry)
             
-            # Save simple JSON
             with open(test_results_file, 'w') as f:
                 json.dump(results, f, indent=2)
             
             print(f"✓ Test result recorded to {test_results_file}")
             
         except Exception as e:
-            print(f"✗ Failed to record simple JSON: {e}")
+            print(f"✗ Failed to record backup JSON: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # Also add to structured report if enabled
-        if JSON_HELPER_AVAILABLE and run_report and os.environ.get("ENABLE_JSON_REPORT", "0") == "1":
-            try:
-                # Extract status from result
-                status = "pass" if result.get("success", False) else "fail"
-                
-                # Create TestEntry
-                test_entry = TestEntry(
-                    name=request.node.name,
-                    status=status,
-                    duration_ms=result.get("duration_ms", 0.0),
-                    metrics=result.get("stats", {}),
-                    error_message=result.get("message") if status == "fail" else None,
-                    category=result.get("category", "functional"),
-                    tags=result.get("tags", [])
-                )
-                
-                run_report.add_test_entry(test_entry)
-                print(f"✓ Test added to structured report")
-            except Exception as e:
-                print(f"✗ Failed to add test to structured report: {e}")
+        # Add to structured report with full detail
+        if not JSON_HELPER_AVAILABLE:
+            print(f"[DEBUG] JSON_HELPER not available, skipping structured report")
+            return
+            
+        if not run_report:
+            print(f"[DEBUG] run_report is None, skipping structured report")
+            return
+            
+        try:
+            print(f"[DEBUG] Adding to structured report...")
+            # Extract metrics from stats field
+            metrics = result.get("stats", {})
+            
+            # Determine category and tags from test name/file
+            category = result.get("category", "functional")
+            tags = result.get("tags", [])
+            
+            # Auto-categorize if not provided
+            if category == "functional":
+                if "camera" in test_file.lower():
+                    category = "camera"
+                elif "apb" in test_file.lower() or "register" in test_file.lower():
+                    category = "hardware_verification"
+                elif "eth" in test_file.lower() or "udp" in test_file.lower():
+                    category = "network"
+                elif "ptp" in test_file.lower():
+                    category = "timing"
+                elif "sample_app" in test_file.lower():
+                    category = "sample_applications"
+                elif "device" in test_file.lower() or "holo" in test_file.lower():
+                    category = "system_integration"
+                elif "latency" in test_file.lower() or "performance" in test_file.lower():
+                    category = "performance"
+            
+            print(f"[DEBUG] Adding test to structured report: name={test_name}, status={status}, category={category}")
+            
+            # Extract artifacts if provided
+            artifacts = result.get("artifacts", [])
+            
+            # Add test to structured report
+            run_report.add_test(
+                name=test_name,
+                status=status,
+                duration_ms=result.get("duration_ms", 0.0),
+                metrics=metrics,
+                error_message=message if status == "fail" else None,
+                artifacts=artifacts,
+                category=category,
+                tags=tags
+            )
+            
+            print(f"[DEBUG] TestEntry created successfully with {len(artifacts)} artifacts")
+            
+            # Mark that this test has been recorded (to avoid duplicate in hook)
+            request.node._result_recorded = True
+            
+            print(f"✓ Test added to structured report")
+        except Exception as e:
+            print(f"✗ Failed to add test to structured report: {e}")
+            import traceback
+            traceback.print_exc()
     
     return _record
 
 
 # Pytest hooks for enhanced reporting
 
-def pytest_runtest_makereport(item, call):
-    """Hook to capture test outcomes including xfail."""
-    if call.when == "call":
-        # Store test outcome in item for later access
-        item.test_outcome = call.excinfo is None
-
-
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Hook to automatically record all test results including xfail."""
+    """Hook to automatically capture all test results including xfail and add to structured report."""
     outcome = yield
     report = outcome.get_result()
     
     # Only process test call phase (not setup/teardown)
     if report.when == "call":
-        # Get the test_results_file fixture
-        try:
-            test_results_file = item.funcargs.get('test_results_file')
-            if not test_results_file:
-                # Try to get it from session
-                test_results_file = item.session.config._test_results_file
-        except:
+        # Get run_report from config if available
+        run_report = getattr(item.session.config, '_run_report', None)
+        
+        if not run_report or not JSON_HELPER_AVAILABLE:
             return
         
-        # Record the test result
+        # Check if test already recorded via record_test_result fixture
+        # (to avoid duplicates for tests that explicitly call record_test_result)
+        if hasattr(item, '_result_recorded'):
+            return
+        
+        # Auto-record tests that don't explicitly call record_test_result
         try:
-            if test_results_file.exists():
-                with open(test_results_file, 'r') as f:
-                    results = json.load(f)
-            else:
-                results = {"tests": []}
-            
             # Determine status
+            # Note: xfail with strict=True shows as failed but has wasxfail attribute
             if report.passed:
                 status = "pass"
             elif report.failed:
-                status = "fail" 
+                # Check if this is an xfail test (can be failed with strict=True)
+                status = "xfail" if hasattr(report, 'wasxfail') else "fail"
             elif report.skipped:
+                # Check if this is an xpassed test (xfail that passed unexpectedly)
                 status = "xfail" if hasattr(report, 'wasxfail') else "skip"
             else:
                 status = "unknown"
             
-            # Create result entry
-            result = {
-                "test_name": item.nodeid,
-                "test_file": str(item.path.name) if hasattr(item, 'path') else str(item.fspath.basename),
-                "timestamp": datetime.now().isoformat(),
-                "success": report.passed,
-                "status": status,
-                "message": str(report.longrepr) if report.failed else status.upper(),
-                "duration_ms": report.duration * 1000,
-            }
+            test_name = item.name
+            test_file = str(item.path.name) if hasattr(item, 'path') else str(item.fspath.basename)
             
-            results["tests"].append(result)
+            # Auto-categorize
+            category = "functional"
+            if "camera" in test_file.lower():
+                category = "camera"
+            elif "apb" in test_file.lower() or "register" in test_file.lower():
+                category = "hardware_verification"
+            elif "eth" in test_file.lower() or "udp" in test_file.lower():
+                category = "network"
+            elif "ptp" in test_file.lower():
+                category = "timing"
+            elif "sample_app" in test_file.lower():
+                category = "sample_applications"
+            elif "device" in test_file.lower() or "holo" in test_file.lower():
+                category = "system_integration"
+            elif "latency" in test_file.lower() or "performance" in test_file.lower():
+                category = "performance"
             
-            # Save
-            with open(test_results_file, 'w') as f:
-                json.dump(results, f, indent=2)
+            # Add test to structured report
+            run_report.add_test(
+                name=test_name,
+                status=status,
+                duration_ms=report.duration * 1000,
+                metrics={},
+                error_message=str(report.longrepr) if report.failed else None,
+                category=category,
+                tags=[]
+            )
                 
         except Exception as e:
-            print(f"Warning: Failed to auto-record test result: {e}")
+            print(f"Warning: Failed to auto-record test to structured report: {e}")
 
 
 @pytest.fixture(scope="session", autouse=True)

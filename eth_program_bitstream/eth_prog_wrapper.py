@@ -15,6 +15,44 @@ import verify_camera_imx258
 import verify_eth_speed
 import terminal_print_formating as tpf
 
+def find_holoscan_dir():
+    """
+    Dynamically find the holoscan-sensor-bridge directory.
+    Searches from the current script location.
+    This script is in /home/(user)/HSB/CI_CD/eth_program_bitstream/
+    Target is /home/(user)/HSB/holoscan-sensor-bridge/
+    """
+    # Start from the current script's directory
+    current_dir = Path(__file__).resolve().parent
+    
+    # Go up to HSB directory: eth_program_bitstream -> CI_CD -> HSB
+    hsb_dir = current_dir.parent.parent
+    holoscan_path = hsb_dir / "holoscan-sensor-bridge"
+    
+    if holoscan_path.exists() and holoscan_path.is_dir():
+        return holoscan_path
+    
+    # Fallback: try common paths if dynamic search fails
+    fallback_paths = [
+        Path("/home/lattice/HSB/holoscan-sensor-bridge"),
+        Path("/home/orin/HSB/holoscan-sensor-bridge"),
+        Path("/home/thor/HSB/holoscan-sensor-bridge"),
+    ]
+    for path in fallback_paths:
+        if path.exists() and path.is_dir():
+            return path
+    
+    # Return first fallback path even if it doesn't exist (will fail with clear error)
+    return fallback_paths[0]
+
+def find_ci_cd_dir():
+    """
+    Dynamically find the CI_CD directory.
+    This script is in /home/(user)/HSB/CI_CD/eth_program_bitstream/
+    """
+    # Go up one level from current script directory
+    return Path(__file__).resolve().parent.parent
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Programme bitstream to FPGA via Hololink Bitstream Programmer")
     parser.add_argument("--bitstream-path", type=str, help="Path to the bitstream file, can be url or local path", required=True)
@@ -44,10 +82,14 @@ def create_results_dir() -> Path:
 def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     docker_ok = True
 
-    os.system("cd /home/lattice/HSB/CI_CD")
+    # Get dynamic paths
+    holoscan_dir = find_holoscan_dir()
+    ci_cd_dir = find_ci_cd_dir()
+    
+    os.system(f"cd {ci_cd_dir}")
 
     os.system('cls' if os.name == 'nt' else 'clear')
-    #tpf.print_img2char("/home/lattice/HSB/CI_CD/images/Lattice_Logo_Color_TransparentBG.png")
+    #tpf.print_img2char(f"{ci_cd_dir}/images/Lattice_Logo_Color_TransparentBG.png")
     tpf.print_start()
 
     # Create timestamped results directory
@@ -141,7 +183,7 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     print("Invoking bitstream programmer...")
     print("The process takes 20 to 30 minutes to complete.")
     prog_start = time.time()
-    os.system(f"cd /home/lattice/HSB/holoscan-sensor-bridge && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
+    os.system(f"cd {holoscan_dir} && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
     prog_end = time.time()
 
     time.sleep(0.2) # soak time

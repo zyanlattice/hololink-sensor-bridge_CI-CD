@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS runs (
   fpga_bitstream TEXT,
   dataset TEXT,
   operator_graph_version TEXT,
-  notes TEXT
+  notes TEXT,
+  env TEXT,
+  schema_version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tests (
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS tests (
   name TEXT,
   status TEXT,
   duration_ms REAL,
+  category TEXT,
   error_message TEXT,
   tags TEXT,
   FOREIGN KEY(run_id) REFERENCES runs(run_id)

@@ -8,7 +8,7 @@ def ethernet_loopback_test(
     port=12345,
     payload_sizes=[512, 1024, 4096, 8192, 16384, 32768, 65000],
     num_packets=5
-):
+) -> tuple[bool, dict]:
     """
     Generic UDP loopback test - no hololink protocol
     Tests pure ethernet/network layer with realistic UDP datagram sizes
@@ -18,7 +18,28 @@ def ethernet_loopback_test(
     IP header: 20 bytes
     UDP header: 8 bytes
     Usable payload: ~65,507 bytes
+    
+    Returns:
+        Tuple of (success: bool, metrics: dict)
     """
+    
+    # Initialize metrics
+    metrics = {
+        "host": host,
+        "port": port,
+        "payload_sizes_bytes": payload_sizes,
+        "num_packets_per_size": num_packets,
+        "total_packets_sent": 0,
+        "total_packets_received": 0,
+        "total_packets_failed": 0,
+        "success_rate_percent": 0.0,
+        "elapsed_time_seconds": 0.0,
+        "timeouts": 0,
+        "mismatches": 0,
+        "errors": 0,
+    }
+    
+    start_time = time.time()
     
     # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -47,9 +68,11 @@ def ethernet_loopback_test(
                 
                 # Send to self
                 sock.sendto(test_packet, (host, port))
+                metrics["total_packets_sent"] += 1
                 
                 # Receive it back - use larger buffer that matches payload_size
                 received, addr = sock.recvfrom(payload_size + 16)
+                metrics["total_packets_received"] += 1
                 
                 total_packets += 1
                 
@@ -59,35 +82,55 @@ def ethernet_loopback_test(
                 else:
                     logging.error(f"  Packet {i}: MISMATCH - sent {len(test_packet)} bytes, got {len(received)} bytes")
                     failed_packets += 1
+                    metrics["mismatches"] += 1
                     
             except socket.timeout:
                 logging.error(f"  Packet {i}: TIMEOUT - no response")
                 failed_packets += 1
+                metrics["timeouts"] += 1
             except OSError as e:
                 logging.error(f"  Packet {i}: ERROR {e.errno} - {e.strerror}")
                 failed_packets += 1
+                metrics["errors"] += 1
                 if e.errno == 90:  # EMSGSIZE
                     logging.error(f"    Message size {payload_size} bytes exceeds UDP limit (~65,507 bytes)")
                     break  # Skip remaining sizes
     
     sock.close()
     
+    # Calculate final metrics
+    metrics["elapsed_time_seconds"] = round(time.time() - start_time, 2)
+    metrics["total_packets_failed"] = failed_packets
+    metrics["success_rate_percent"] = round(100 * (total_packets - failed_packets) / total_packets, 2) if total_packets > 0 else 0.0
+    
     logging.info(f"\nTest Summary:")
     logging.info(f"  Total packets: {total_packets}")
     logging.info(f"  Failed packets: {failed_packets}")
-    logging.info(f"  Success rate: {100 * (total_packets - failed_packets) / total_packets if total_packets > 0 else 0:.1f}%")
+    logging.info(f"  Success rate: {metrics['success_rate_percent']:.1f}%")
     
-    return failed_packets == 0
+    success = failed_packets == 0
+    return success, metrics
 
-def main()-> bool:
+def main() -> tuple[bool, str, dict]:
+    """Run UDP loopback test.
+    
+    Returns:
+        Tuple of (success: bool, message: str, metrics: dict)
+    """
     logging.basicConfig(level=logging.INFO)
-    success = ethernet_loopback_test()
+    success, metrics = ethernet_loopback_test()
+    
     if success:
         logging.info("UDP loopback test completed successfully.")
-        return True
+        message = "UDP loopback test passed"
     else:
         logging.error("UDP loopback test failed.")
-        return False
+        message = f"UDP loopback test failed: {metrics['total_packets_failed']} packets failed"
+    
+    print(f"\n📊 Metrics: {metrics}")
+    return success, message, metrics
 
 if __name__ == "__main__":
-    main()
+    import sys
+    success, message, metrics = main()
+    sys.exit(0 if success else 1)

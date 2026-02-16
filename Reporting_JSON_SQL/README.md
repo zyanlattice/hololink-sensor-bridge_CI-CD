@@ -4,17 +4,86 @@
 
 ---
 
+## Requirements
+
+### Python Version
+- **Python 3.8+** (tested on 3.8, 3.9, 3.10)
+
+### Required Libraries
+```bash
+pip install streamlit pandas plotly
+```
+
+**Dependencies:**
+- `streamlit` - Dashboard web interface (required)
+- `pandas` - Data manipulation for dashboard (required)
+- `plotly` - Interactive charts in dashboard (required)
+- `sqlite3` - Database engine ✅ **Built into Python** (no install needed)
+- `json`, `pathlib`, `xml.etree.ElementTree` - ✅ **Built into Python**
+
+### Quick Install
+
+#### Option 1: Virtual Environment (Recommended for Linux/Ubuntu)
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate  # Linux/Mac
+# OR
+venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install streamlit pandas plotly
+
+# Verify installation
+python -c "import streamlit, pandas, plotly, sqlite3; print('✓ All dependencies installed')"
+
+# When done, deactivate
+deactivate
+```
+
+#### Option 2: Direct Install (Windows or systems without externally-managed-environment)
+```bash
+pip install streamlit pandas plotly
+```
+
+#### Option 3: Using pipx (for standalone tool installation)
+```bash
+# Install pipx first (if not installed)
+sudo apt install pipx  # Ubuntu/Debian
+pipx ensurepath
+
+# Install streamlit as standalone tool
+pipx install streamlit
+
+# Note: You'll still need pandas and plotly in your environment
+```
+
+**Verify Installation:**
+```bash
+python -c "import streamlit, pandas, plotly, sqlite3; print('✓ All dependencies installed')"
+```
+
+**⚠️ Linux/Ubuntu Users:** If you see `externally-managed-environment` error, use Option 1 (virtual environment) above.
+
+---
+
 ## Quick Start (60 seconds)
 
 ```bash
 # 1. Run test (creates JSON)
 python my_test.py
+# OR for pytest integration:
+pytest  # Creates test_reports/logs_YYYYMMDD_HHMMSS/test_results_*.json
 
 # 2. Setup database (one-time)
 python init_sql.py
 
-# 3. Ingest results
+# 3. Ingest results - provide path to folder or file
 python ingestion_script.py results/
+# OR for pytest:
+python ingestion_script.py ../test_reports/logs_20260212_143022
 
 # 4. View dashboard - Choose one:
 python start_dashboard.py          # Python way (Ctrl+C to stop)
@@ -46,16 +115,22 @@ A **flexible, generic test reporting framework** for the Orin + FPGA HSB system.
 ## Architecture: Test → JSON → Database → Dashboard
 
 ```
-Your Test Script (my_test.py)
+Your Test Script (my_test.py) OR Pytest Suite
     ↓ uses json_helper_v2
-JSON Report (results/summary.json)
-    ↓ ingested by
-SQLite Database (db/results.sqlite)
+JSON Report (results/summary.json OR test_results_*.json)
+    ↓ ingested by (YOU PROVIDE PATH)
+SQLite Database (db/results.sqlite) ← Data persists here
     ↓ queried by
 Streamlit Dashboard (http://localhost:8501)
     ↓
 Your Web Browser
 ```
+
+**Key Points:**
+- 📁 **JSON files** are temporary (archived in test_reports/ or results/)
+- 💾 **SQLite database** (`db/results.sqlite`) stores ALL data permanently
+- 🔄 **Each ingestion ADDS to database** (doesn't overwrite previous runs)
+- 📊 **Dashboard reads from database** (not JSON files)
 
 ---
 
@@ -118,7 +193,7 @@ Organize your tests by category (used for dashboard grouping):
 
 ## Running Tests
 
-### Single Test
+### Single Test (Standalone Script)
 
 ```bash
 python my_test.py
@@ -129,6 +204,16 @@ Dashboard shows:
 - Total Tests: 1
 - Status: pass/fail
 - Metrics and artifacts
+
+### Single Test (Pytest Integration)
+
+```bash
+pytest test_my_feature.py
+# Creates: test_reports/logs_20260212_143022/test_results_20260212_143022.json
+python ingestion_script.py ../test_reports/logs_20260212_143022
+```
+
+**Note:** You must provide the specific folder path - ingestion doesn't auto-detect latest folder.
 
 ### Test Suite (Multiple Tests)
 
@@ -173,7 +258,11 @@ python ingestion_script.py results/
 # Dashboard shows trend across 2 runs
 
 # Third iteration
-python my_test.py
+python my_test.pyJSON file:
+- **Standalone tests:** `results/summary.json`
+- **Pytest integration:** `test_reports/logs_YYYYMMDD_HHMMSS/test_results_YYYYMMDD_HHMMSS.json`
+
+Example structure
 python ingestion_script.py results/
 # Refresh browser
 # Dashboard shows trend line across 3 runs
@@ -222,7 +311,13 @@ Each test run generates one `results/summary.json`:
 }
 ```
 
----
+**Location:** `Reporting_JSON_SQL/db/results.sqlite`
+
+**Persistence:** ✅ Data is **permanent** - stored until you manually delete the `db/` folder.
+
+**Growth:** Each ingestion **adds** new runs to the database (doesn't overwrite).
+
+After ingestion, data is organized
 
 ## Understanding the Database
 
@@ -285,13 +380,22 @@ python inspect_database.py
 - **Run Selector:** View specific run details
 - **Test Results Table:** Name, status, duration, error
 - **Metric Explorer:** Filter and view metrics by type
-- **Artifacts:** PNG images, plots, histograms
+- **Artifacts:** PNG images, plot (Standalone)
+```bash
+python my_test.py
+python ingestion_script.py results/
+# Refresh browser
+```
+**Time:** ~2 seconds
 
----
-
-## Common Workflows
-
-### Workflow A: Debug Single Test
+### Workflow A2: Debug Single Test (Pytest)
+```bash
+pytest test_my_feature.py -v
+# Note the output folder: test_reports/logs_20260212_143022
+python ingestion_script.py ../test_reports/logs_20260212_143022
+# Refresh browser
+```
+**Time:** ~5 A: Debug Single Test
 ```bash
 python my_test.py
 python ingestion_script.py results/
@@ -395,6 +499,73 @@ report.add_test(
     name="frame_gap_jitter",
     artifacts=[
         Artifact(
+            type="png",
+            path="frames/frame_gap_histogram.png",
+            label="Frame Gap Distribution",
+            meta={"width": 800, "height": 600}
+        ),
+        Artifact(
+            type="log",
+            path="logs/test.log",
+            label="Test Log"
+        )
+    ]
+)
+```
+
+### Timeseries Data (Large Files)
+
+```python
+report.add_timeseries(
+    name="frame_gap_ms",
+    path="metrics/frame_gap_ms.parquet",
+    count=18000,
+    meta={"source": "orchestrator", "unit": "ms"}
+)
+```
+
+Dashboard can later fetch these files for deep dives.
+
+---
+
+## Troubleshooting
+
+### "externally-managed-environment" Error (Linux/Ubuntu)
+
+**Error Message:**
+```
+error: externally-managed-environment
+× This environment is externally managed
+```
+
+**Solution:** Use a virtual environment (Python 3.11+ security feature):
+
+```bash
+# 1. Create virtual environment (one-time)
+python3 -m venv venv
+
+# 2. Activate it (every terminal session)
+source venv/bin/activate
+
+# 3. Install packages
+pip install streamlit pandas plotly
+
+# 4. Run your scripts normally
+python init_sql.py
+python ingestion_script.py results/
+python start_dashboard.py
+
+# 5. Deactivate when done
+deactivate
+```
+
+**Why this happens:** Modern Linux distributions (Ubuntu 23.04+, Debian 12+) use PEP 668 to prevent system Python corruption. Virtual environments are the recommended solution.
+
+**Alternative (NOT recommended):** `pip install --break-system-packages` can damage your system Python.
+
+---
+
+### "   Artifact(
             type="png",
             path="frames/frame_gap_histogram.png",
             label="Frame Gap Distribution",
@@ -555,16 +726,20 @@ report.add_timeseries(
 
 ### report.finalize()
 
-```python
-report.finalize(metric_registry=None)  # Calculates summary stats
-```
+```python (standalone)
+python my_test.py
 
-### report.write()
+# Run test (pytest)
+pytest test_file.py  # Note output folder from pytest
 
-```python
-report.write(Path("results"))  # Writes JSON to results/summary.json
-```
+# Setup database (one-time)
+python init_sql.py
 
+# Ingest results - MUST provide path
+python ingestion_script.py results/                           # Standalone
+python ingestion_script.py ../test_reports/logs_20260212_143022  # Pytest
+
+# View database (location: db/results.sqlite)
 ---
 
 ## Quick Commands

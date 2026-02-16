@@ -27,8 +27,34 @@ import os
 import requests
 import urllib.parse
 import yaml
+from pathlib import Path
 
 from read_metadata import search_metadata_value
+
+def find_ci_cd_dir():
+    """
+    Dynamically find the CI_CD directory.
+    This script is in /home/(user)/HSB/CI_CD/scripts/
+    """
+    # Go up one level from current script directory
+    script_dir = Path(__file__).resolve().parent
+    ci_cd_dir = script_dir.parent
+    
+    if ci_cd_dir.exists() and ci_cd_dir.is_dir():
+        return ci_cd_dir
+    
+    # Fallback: try common paths
+    fallback_paths = [
+        Path("/home/lattice/HSB/CI_CD"),
+        Path("/home/orin/HSB/CI_CD"),
+        Path("/home/thor/HSB/CI_CD"),
+    ]
+    for path in fallback_paths:
+        if path.exists() and path.is_dir():
+            return path
+    
+    # Return first fallback path even if it doesn't exist
+    return fallback_paths[0]
 
 def measure(metadata, content, md5_check=None) -> bool:
     md5 = hashlib.md5(content)
@@ -103,7 +129,7 @@ def parse_args(args=None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--eula-file",
-        default="/home/lattice/HSB/CI_CD/EULA/NVIDIA_RTL_License_Agreement.txt",
+        default=str(find_ci_cd_dir() / "EULA" / "NVIDIA_RTL_License_Agreement.txt"),
         help="EULA, fetched from a local file.",
     )
     parser.add_argument(

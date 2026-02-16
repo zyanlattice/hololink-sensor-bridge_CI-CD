@@ -446,7 +446,9 @@ def main() -> Tuple[bool, str, dict]:
     # Detect interface
     iface = vdd_main(timeout_seconds=10)
     if not iface:
-        return False, "Could not detect Hololink network interface", {}
+        stats = {"error": "Could not detect Hololink network interface"}
+        print(f"\n📊 Metrics: {stats}")
+        return False, "Could not detect Hololink network interface", stats
     
     logging.info(f"Detected Hololink interface: {iface}")
     
@@ -456,7 +458,9 @@ def main() -> Tuple[bool, str, dict]:
         hw_speed = _read_sysfs_speed(iface)
     
     if hw_speed is None or hw_speed <= 0:
-        return False, f"Link speed unavailable for interface '{iface}'", {"interface": iface}
+        stats = {"interface": iface, "error": "Link speed unavailable"}
+        print(f"\n📊 Metrics: {stats}")
+        return False, f"Link speed unavailable for interface '{iface}'", stats
     
     # Measure actual throughput (requires running hardware)
     result = _measure_hololink_throughput(camera_ip=cam_ip, frame_limit=frame_lim, timeout_seconds=15, camera_mode=cam_mode)
@@ -476,6 +480,8 @@ def main() -> Tuple[bool, str, dict]:
     
     # Check if hardware speed meets minimum
     logging.info(f"Interface: {iface}, HW speed: {hw_speed} Throughput: {actual_throughput} Mbps (min: {expected_throughput} Mbps)")
+    
+    print(f"\n📊 Metrics: {stats}")
     
     # Allow 5% tolerance for rounding
     if actual_throughput >= int(0.7 * expected_throughput):

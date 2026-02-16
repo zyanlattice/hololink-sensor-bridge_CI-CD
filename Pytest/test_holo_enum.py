@@ -5,6 +5,7 @@ Tests verify_holo_enum.py script for basic connectivity.
 
 import pytest
 import sys
+from io import StringIO
 
 
 @pytest.mark.hardware
@@ -22,6 +23,8 @@ def test_hololink_enumeration(hololink_device_ip, record_test_result):
     
     # Mock command-line arguments
     original_argv = sys.argv
+    original_stdout = sys.stdout
+    
     try:
         sys.argv = [
             "verify_holo_enum.py",
@@ -30,24 +33,36 @@ def test_hololink_enumeration(hololink_device_ip, record_test_result):
             "--expected-ip", hololink_device_ip
         ]
         
-        # Run the verification
-        success = verify_holo_enum.main()
+        # Capture stdout for user visibility
+        captured_output = StringIO()
+        sys.stdout = captured_output
         
-        message = f"Hololink Enumeration: {'PASS' if success else 'FAIL'}"
-        if not success:
-            message += " - Failed to capture expected enumerations or verify IP"
+        try:
+            # verify_holo_enum.py returns (success, message, metrics)
+            success, message, metrics = verify_holo_enum.main()
+            
+        except Exception as e:
+            success = False
+            message = f"Hololink enumeration failed: {str(e)}"
+            metrics = {"error": str(e), "expected_ip": hololink_device_ip}
+            
+        finally:
+            sys.stdout = original_stdout
+            output_text = captured_output.getvalue()
+            if output_text:
+                print(output_text)
         
         record_test_result({
             "success": success,
             "message": message,
-            "stats": {
-                "expected_ip": hololink_device_ip,
-                "enumeration_count": 10
-            }
+            "category": "system_integration",
+            "tags": ["enumeration", "broadcast", "connectivity"],
+            "stats": metrics
         })
         
         assert success, message
     
     finally:
         sys.argv = original_argv
+        sys.stdout = original_stdout
 

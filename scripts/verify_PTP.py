@@ -636,13 +636,37 @@ def main() -> Tuple[bool, str, dict]:
     if result is None:
         ptp_pass = False
         stats = {
-            "Mean_frame_acquisition_ms": 0,
-            "PTP_Jitter_pct": 0,
-            "PTP_Std_Dev_us": 0,
-            "Mean_Overall_Latency_ms": 0,
-            "Mean_CPU_Latency_us": 0,
-            "Mean_frame_interval_ms": 0,
+            "camera_ip": cam_ip,
+            "camera_mode": cam_mode,
+            "frame_limit": frame_lim,
+            "frames_captured": 0,
+            "valid_frames": 0,
+            "mean_frame_acquisition_ms": 0,
+            "min_frame_acquisition_ms": 0,
+            "max_frame_acquisition_ms": 0,
+            "stdev_frame_acquisition_us": 0,
+            "mean_cpu_latency_us": 0,
+            "min_cpu_latency_us": 0,
+            "max_cpu_latency_us": 0,
+            "stdev_cpu_latency_us": 0,
+            "mean_operator_latency_ms": 0,
+            "min_operator_latency_ms": 0,
+            "max_operator_latency_ms": 0,
+            "stdev_operator_latency_us": 0,
+            "mean_processing_time_us": 0,
+            "min_processing_time_us": 0,
+            "max_processing_time_us": 0,
+            "stdev_processing_time_us": 0,
+            "mean_overall_latency_ms": 0,
+            "min_overall_latency_ms": 0,
+            "max_overall_latency_ms": 0,
+            "stdev_overall_latency_us": 0,
+            "mean_frame_interval_ms": 0,
+            "stdev_frame_interval_ms": 0,
+            "frame_jitter_pct": 0,
+            "interval_fail_count": 0,
         }
+        print(f"📊 Metrics: {stats}")
         return ptp_pass, f"Hololink PTP measurement failed", stats
     else:
         # Extract all metrics for validation
@@ -660,13 +684,44 @@ def main() -> Tuple[bool, str, dict]:
                    
         
         stats = {
-            "Mean_frame_acquisition_ms": mean_ptp_int,
-            "Frame_Jitter_pct": jitter,
-            "Frame_Std_Dev_us": std_dev,
-            "Mean_Overall_Latency_ms": overall_latency,
-            "Mean_CPU_Latency_us": cpu_latency,
-            "Mean_frame_interval_ms": mean_frame_interval,
+            "camera_ip": cam_ip,
+            "camera_mode": cam_mode,
+            "frame_limit": frame_lim,
+            "frames_captured": result['frame_count'],
+            "valid_frames": result['valid_frames'],
+            # Frame acquisition time (sensor → FPGA)
+            "mean_frame_acquisition_ms": result['mean_frame_acquisition_ms'],
+            "min_frame_acquisition_ms": result['min_frame_acquisition_ms'],
+            "max_frame_acquisition_ms": result['max_frame_acquisition_ms'],
+            "stdev_frame_acquisition_us": result['stdev_frame_acquisition_us'],
+            # CPU latency (FPGA → host thread)
+            "mean_cpu_latency_us": result['mean_cpu_latency_us'],
+            "min_cpu_latency_us": result['min_cpu_latency_us'],
+            "max_cpu_latency_us": result['max_cpu_latency_us'],
+            "stdev_cpu_latency_us": result['stdev_cpu_latency_us'],
+            # Operator latency (thread → operator)
+            "mean_operator_latency_ms": result['mean_operator_latency_ms'],
+            "min_operator_latency_ms": result['min_operator_latency_ms'],
+            "max_operator_latency_ms": result['max_operator_latency_ms'],
+            "stdev_operator_latency_us": result['stdev_operator_latency_us'],
+            # Processing time (operator → complete)
+            "mean_processing_time_us": result['mean_processing_time_us'],
+            "min_processing_time_us": result['min_processing_time_us'],
+            "max_processing_time_us": result['max_processing_time_us'],
+            "stdev_processing_time_us": result['stdev_processing_time_us'],
+            # Overall latency (frame start → complete)
+            "mean_overall_latency_ms": result['mean_overall_latency_ms'],
+            "min_overall_latency_ms": result['min_overall_latency_ms'],
+            "max_overall_latency_ms": result['max_overall_latency_ms'],
+            "stdev_overall_latency_us": result['stdev_overall_latency_us'],
+            # Inter-frame jitter (legacy metric)
+            "mean_frame_interval_ms": result['mean_frame_interval_ms'],
+            "stdev_frame_interval_ms": result['stdev_frame_interval_ms'],
+            "frame_jitter_pct": result['frame_jitter_pct'],
+            "interval_fail_count": result['interval_fail_count'],
         }
+        
+        print(f"📊 Metrics: {stats}")
         
         if ptp_pass:
             return ptp_pass, f"Hololink PTP measurement passed (PTP frame latency={mean_ptp_int:.2f}ms, Expected: 15.8±10% ms)", stats

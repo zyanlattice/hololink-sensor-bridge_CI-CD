@@ -4,6 +4,8 @@ Tests IMX258 camera across multiple modes in sequence.
 """
 
 import pytest
+import sys
+from io import StringIO
 
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
@@ -17,9 +19,10 @@ def test_multi_mode_sequence(hololink_device_ip, camera_id, device_type, record_
     
     # Import the verification script
     import verify_multi_mode_imx258
-    import sys
     
     original_argv = sys.argv
+    original_stdout = sys.stdout
+    
     try:
         sys.argv = [
             "verify_multi_mode_imx258.py",
@@ -27,25 +30,36 @@ def test_multi_mode_sequence(hololink_device_ip, camera_id, device_type, record_
             "--camera-id", str(camera_id)
         ]
         
-        # Run multi-mode verification
-        # Note: verify_multi_mode_imx258.main() runs a sequence of tests
-        # and exits with sys.exit(), so we need to catch that
+        # Capture stdout for user visibility
+        captured_output = StringIO()
+        sys.stdout = captured_output
+        
         try:
-            verify_multi_mode_imx258.main()
-            success = True
-            message = "Multi-mode camera test: PASS"
-        except SystemExit as e:
-            success = e.code == 0
-            message = f"Multi-mode camera test: {'PASS' if success else 'FAIL'}"
+            # verify_multi_mode_imx258.py returns (success, message, metrics)
+            success, message, metrics = verify_multi_mode_imx258.main()
+            
+        except Exception as e:
+            success = False
+            message = f"Multi-mode camera test failed: {str(e)}"
+            metrics = {"error": str(e), "test_modes": [0, 1, 0, 0, 1]}
+            
+        finally:
+            sys.stdout = original_stdout
+            output_text = captured_output.getvalue()
+            if output_text:
+                print(output_text)
         
         record_test_result({
             "success": success,
             "message": message,
-            "stats": {"test_modes": [0, 1, 0, 0, 1]}
+            "category": "camera",
+            "tags": ["camera", "imx258", "multi_mode", "mode_switching"],
+            "stats": metrics
         })
         
         assert success, message
     
     finally:
         sys.argv = original_argv
+        sys.stdout = original_stdout
 

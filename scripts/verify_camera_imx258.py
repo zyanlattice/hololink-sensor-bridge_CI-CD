@@ -908,18 +908,25 @@ def main() -> bool:
             for key, value in stats.items():
                 print(f"  {key}: {value}")
     
+    # Print metrics in capture-friendly format for pytest
+    print(f"\n📊 Metrics: {cam_stats}")
 
     print("\n" + "=" * 90)
     if cam_success:
         print(" Camera verification PASSED")
-        sys.exit(0)
+        return cam_success, cam_message, cam_stats
     else:
         print(" TESTS FAILED")
         print(" camera_ok:", cam_success)
-        sys.exit(1)
-    print("\n" + "=" * 90)
+        return cam_success, cam_message, cam_stats
 
     return cam_success
 
 if __name__ == "__main__":
-    main()
+    success, message, stats = main()
+    if success:
+        print(f"[PASS] {message}")
+        sys.exit(0)
+    else:
+        print(f"[FAIL] {message}")
+        sys.exit(1)

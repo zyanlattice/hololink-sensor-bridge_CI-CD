@@ -100,7 +100,12 @@ def run_mode(mode, holoviz=False, camera_ip="192.168.0.2", camera_id=0):
         return False, f"Mode {mode} error: {str(e)}"
 
 
-def main():
+def main() -> tuple[bool, str, dict]:
+    """Run multi-mode camera verification.
+    
+    Returns:
+        Tuple of (success: bool, message: str, metrics: dict)
+    """
     parser = argparse.ArgumentParser(
         description="Run IMX258 camera verification across multiple modes"
     )
@@ -125,6 +130,20 @@ def main():
     
     args = parser.parse_args()
     
+    # Initialize metrics
+    metrics = {
+        "test_modes": TEST_MODES,
+        "modes_tested": 0,
+        "modes_passed": 0,
+        "modes_failed": 0,
+        "holoviz_enabled": args.holoviz,
+        "camera_ip": args.camera_ip,
+        "camera_id": args.camera_id,
+        "total_elapsed_time_seconds": 0.0,
+        "mode_results": [],
+        "mode_timings_seconds": {},
+    }
+    
     # Setup logging
     logging.basicConfig(
         level=logging.INFO,
@@ -144,18 +163,29 @@ def main():
     for idx, mode in enumerate(TEST_MODES, 1):
         logging.info(f"\n[{idx}/{len(TEST_MODES)}] Running mode {mode}...")
         
+        mode_start = time.time()
         success, message = run_mode(
             mode,
             holoviz=args.holoviz,
             camera_ip=args.camera_ip,
             camera_id=args.camera_id
         )
+        mode_elapsed = time.time() - mode_start
         
         results.append({
             "mode": mode,
             "success": success,
-            "message": message
+            "message": message,
+            "elapsed_seconds": round(mode_elapsed, 2)
         })
+        
+        # Track in metrics
+        metrics["modes_tested"] += 1
+        if success:
+            metrics["modes_passed"] += 1
+        else:
+            metrics["modes_failed"] += 1
+        metrics["mode_timings_seconds"][f"mode_{mode}_run_{idx}"] = round(mode_elapsed, 2)
         
         # Brief pause between modes
         if idx < len(TEST_MODES):
@@ -164,6 +194,15 @@ def main():
     
     # Print summary
     elapsed_time = time.time() - start_time
+    metrics["total_elapsed_time_seconds"] = round(elapsed_time, 2)
+    
+    # Store detailed mode results
+    for result in results:
+        metrics["mode_results"].append({
+            "mode": result["mode"],
+            "success": result["success"],
+            "elapsed_seconds": result.get("elapsed_seconds", 0)
+        })
     
     print("\n" + tpf.header_footer(90, "MULTI-MODE VERIFICATION SUMMARY"))
     
@@ -172,21 +211,26 @@ def main():
     
     for result in results:
         status = "✓ PASS" if result["success"] else "✗ FAIL"
-        print(f"{status}: {result['message']}")
+        elapsed = result.get("elapsed_seconds", 0)
+        print(f"{status}: {result['message']} ({elapsed:.2f}s)")
     
     print("\n" + "="*90)
     print(f"Results: {passed}/{total} modes passed")
     print(f"Total time: {elapsed_time:.2f}s")
     print("="*90 + "\n")
     
-    # Exit with appropriate code
+    # Print metrics
+    print(f"📊 Metrics: {metrics}")
+    
+    # Return results
     if passed == total:
         logging.info("All modes passed!")
-        sys.exit(0)
+        return True, f"Multi-mode test passed: {passed}/{total} modes", metrics
     else:
         logging.error(f"{total - passed} mode(s) failed!")
-        sys.exit(1)
+        return False, f"Multi-mode test failed: {passed}/{total} modes passed", metrics
 
 
 if __name__ == "__main__":
-    main()
+    success, message, metrics = main()
+    sys.exit(0 if success else 1)
