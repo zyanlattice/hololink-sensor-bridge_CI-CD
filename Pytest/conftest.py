@@ -42,6 +42,51 @@ def pytest_configure(config):
     )
 
 
+def pytest_metadata(metadata):
+    """Customize HTML report metadata to match JSON report environment."""
+    # Remove default metadata keys
+    metadata.pop("Python", None)
+    metadata.pop("Platform", None)
+    metadata.pop("Packages", None)
+    metadata.pop("Plugins", None)
+    
+    # Add environment info matching JSON report format
+    metadata["Hololink IP"] = os.environ.get("HOLOLINK_IP", "192.168.0.2")
+    metadata["Device Type"] = os.environ.get("DEVICE_TYPE", "unknown")
+    metadata["Bitstream Version"] = os.environ.get("BITSTREAM_VERSION", "unknown")
+    metadata["Bitstream Datecode"] = os.environ.get("BITSTREAM_DATECODE", "unknown")
+    metadata["Camera Model"] = os.environ.get("CAMERA_MODEL", "imx258")
+    metadata["Camera ID"] = os.environ.get("CAMERA_ID", "0")
+    
+    # Get host device from device tree if available
+    try:
+        device_tree_model = Path("/proc/device-tree/model")
+        if device_tree_model.exists():
+            host_device = device_tree_model.read_bytes().decode('utf-8').rstrip('\x00')
+            metadata["Host Device"] = host_device
+    except Exception:
+        pass
+    
+    # Add git info if available
+    git_sha = os.environ.get("GIT_SHA")
+    if git_sha:
+        metadata["Git SHA"] = git_sha
+    
+    git_branch = os.environ.get("GIT_BRANCH")
+    if git_branch:
+        metadata["Git Branch"] = git_branch
+    
+    # Add bitstream path if specified
+    bitstream_path = os.environ.get("BITSTREAM_PATH")
+    if bitstream_path:
+        metadata["Bitstream Path"] = bitstream_path
+    
+    # Add MD5 if specified
+    expected_md5 = os.environ.get("EXPECTED_MD5")
+    if expected_md5:
+        metadata["Expected MD5"] = expected_md5
+
+
 @pytest.fixture(scope="session")
 def scripts_dir():
     """Root directory containing verify scripts."""
@@ -192,6 +237,16 @@ def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitst
         yield None
         return
     
+    # Get host device name from device tree (Linux)
+    host_device = "unknown"
+    try:
+        device_tree_model = Path("/proc/device-tree/model")
+        if device_tree_model.exists():
+            # Read and strip null bytes
+            host_device = device_tree_model.read_bytes().decode('utf-8').rstrip('\x00')
+    except Exception:
+        pass
+    
     try:
         # Create run report with environment metadata
         report = RunReport(
@@ -204,6 +259,7 @@ def run_report(save_dir, test_session_id, hololink_device_ip, device_type, bitst
                 "python_version": sys.version,
                 "platform": sys.platform,
                 "host_platform": os.environ.get("HOST_PLATFORM", "unknown"),
+                "host_device": host_device,
                 "camera_model": os.environ.get("CAMERA_MODEL", "imx258"),
                 "git_sha": os.environ.get("GIT_SHA", None),
                 "branch": os.environ.get("GIT_BRANCH", None)
@@ -407,8 +463,17 @@ def pytest_runtest_makereport(item, call):
             return
         
         # Check if test already recorded via record_test_result fixture
-        # (to avoid duplicates for tests that explicitly call record_test_result)
         if hasattr(item, '_result_recorded'):
+            # Test already recorded, but we need to update its duration
+            # Find the test in run_report and update its duration
+            try:
+                test_name = item.name
+                for test in run_report.tests:
+                    if test.name == test_name:
+                        test.duration_ms = report.duration * 1000
+                        break
+            except Exception as e:
+                print(f"Warning: Failed to update duration for {item.name}: {e}")
             return
         
         # Auto-record tests that don't explicitly call record_test_result

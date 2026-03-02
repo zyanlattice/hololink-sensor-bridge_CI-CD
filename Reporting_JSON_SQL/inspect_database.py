@@ -38,12 +38,13 @@ def print_table(headers, rows):
     for row in rows:
         print(format_row(headers, row, col_widths))
 
-db_file = Path("walkthrough_demo.sqlite")
+db_file = Path("db") / "results.sqlite"
 
 if not db_file.exists():
     print(f"ERROR: {db_file} not found")
     print("\nRun this first:")
-    print("  python complete_walkthrough.py")
+    print("  python init_sql.py")
+    print("  python ingestion_script.py results/")
     exit(1)
 
 conn = sqlite3.connect(db_file)

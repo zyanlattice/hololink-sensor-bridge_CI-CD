@@ -769,9 +769,17 @@ python -m json.tool results/summary.json
 # View walkthrough demo
 python complete_walkthrough.py
 
-# Reset everything
-rm -r results/ db/
-python init_sql.py
+# Reset database (deletes all data)
+rm -r db/               # Linux/Mac
+rmdir /s /q db          # Windows CMD
+Remove-Item -Recurse -Force db  # Windows PowerShell
+python init_sql.py      # Recreate empty database
+
+# Reset everything (database + results)
+rm -r results/ db/      # Linux/Mac
+rmdir /s /q results db  # Windows CMD
+Remove-Item -Recurse -Force results,db  # Windows PowerShell
+python init_sql.py      # Recreate empty database
 ```
 
 ---

@@ -118,9 +118,13 @@ def build_docker_command(
     ])
     
     # Volume mounts
+    # Extract home directory dynamically from workspace_root
+    # e.g., /home/orin/HSB/holoscan-sensor-bridge -> /home/orin
+    home_dir = str(Path(workspace_root).parent.parent)
+    
     volumes = [
         (workspace_root, workspace_root),
-        ("/home/lattice", "/home/lattice"),
+        (home_dir, home_dir),
         ("/sys/bus/pci/devices", "/sys/bus/pci/devices"),
         ("/sys/kernel/mm/hugepages", "/sys/kernel/mm/hugepages"),
         ("/dev", "/dev"),
@@ -158,9 +162,12 @@ def build_docker_command(
     cmd.append(image_name)
     
     # Command to run inside container - directly call Python script
+    # Find CI_CD directory dynamically based on workspace root
+    ci_cd_path = str(Path(workspace_root).parent / "CI_CD" / "eth_program_bitstream")
+    
     python_cmd = (
-        f"cd /home/lattice/HSB/CI_CD/eth_program_bitstream && "
-        f"python3 eth_prog_wrapper.py "
+        f"cd {ci_cd_path} && "
+        f"python3 eth_prog.py "
         f"--version '{args.version}' "
         f"--bitstream-path '{args.bitstream_path}' "
         f"--peer-ip '{args.peer_ip}' "

@@ -25,7 +25,7 @@ BITSTREAM_VERSION="${BITSTREAM_VERSION:-}"  # Required - no default
 BITSTREAM_DATECODE="${BITSTREAM_DATECODE:-}"  # Required - no default
 EXPECTED_MD5="${EXPECTED_MD5:-}"
 TEST_REPORT_DIR="$CI_CD_ROOT/test_reports"
-HTML_REPORT="test_report_$(date +%Y%m%d_%H%M%S).html"
+GENERATE_HTML=0
 
 # Parse command line arguments
 MARKERS=""
@@ -112,7 +112,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --html)
-            EXTRA_ARGS="$EXTRA_ARGS --html=$HTML_REPORT --self-contained-html"
+            GENERATE_HTML=1
             shift
             ;;
         *)
@@ -196,6 +196,12 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TEST_LOG_DIR="$TEST_REPORT_DIR/logs_$TIMESTAMP"
 mkdir -p "$TEST_LOG_DIR"
 LOG_FILE="$TEST_LOG_DIR/pytest_run.log"
+
+# Setup HTML report in the log directory
+if [[ $GENERATE_HTML -eq 1 ]]; then
+    HTML_REPORT="$TEST_LOG_DIR/test_report_$TIMESTAMP.html"
+    EXTRA_ARGS="$EXTRA_ARGS --html=$HTML_REPORT --self-contained-html"
+fi
 
 # Export TEST_LOG_DIR so pytest can access it
 export TEST_LOG_DIR

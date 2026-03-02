@@ -14,7 +14,7 @@ def ensure_schema(conn):
     CREATE TABLE IF NOT EXISTS runs (
       run_id TEXT PRIMARY KEY, timestamp TEXT, git_sha TEXT, branch TEXT,
       orin_image TEXT, fpga_bitstream TEXT, dataset TEXT, operator_graph_version TEXT, notes TEXT,
-      env TEXT, schema_version TEXT, source_dir TEXT
+      env TEXT, schema_version TEXT
     );
     CREATE TABLE IF NOT EXISTS tests (
       test_id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, name TEXT,
@@ -29,15 +29,6 @@ def ensure_schema(conn):
       type TEXT, path TEXT, label TEXT
     );
     """)
-    
-    # Migration: Add source_dir column if it doesn't exist (for existing databases)
-    try:
-        conn.execute("ALTER TABLE runs ADD COLUMN source_dir TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        # Column already exists
-        pass
-    
     conn.commit()
 
 def ingest_structured_report(json_path: pathlib.Path, conn):
@@ -47,21 +38,19 @@ def ingest_structured_report(json_path: pathlib.Path, conn):
     run_id = data.get("run_id", json_path.stem)
     timestamp = data.get("timestamp", datetime.now(timezone.utc).isoformat())
     env = data.get("env", {})
-    source_dir = str(json_path.parent.resolve())
     
     # Insert run metadata
     conn.execute("""INSERT OR REPLACE INTO runs(
                     run_id, timestamp, git_sha, branch, orin_image, fpga_bitstream,
-                    dataset, operator_graph_version, notes, env, schema_version, source_dir)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    dataset, operator_graph_version, notes, env, schema_version)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                  (run_id, timestamp,
                   env.get("git_sha"), env.get("branch"),
                   env.get("host_platform"), env.get("bitstream_version"),
                   None, env.get("operator_graph_version"),
                   data.get("notes"),
                   json.dumps(env),
-                  data.get("schema_version"),
-                  source_dir))
+                  data.get("schema_version")))
     
     # Insert tests
     for test in data.get("tests", []):
@@ -90,9 +79,6 @@ def ingest_structured_report(json_path: pathlib.Path, conn):
             elif isinstance(metric_value, (list, tuple)):
                 # Store list/array as JSON in meta, use first value or None for value column
                 first_val = metric_value[0] if metric_value else None
-                # If first_val is a dict or list, serialize it (SQLite can't bind complex types)
-                if isinstance(first_val, (dict, list)):
-                    first_val = json.dumps(first_val)
                 conn.execute("""INSERT INTO metrics(
                                 run_id, test_id, name, value, unit, scope, meta)
                                 VALUES(?,?,?,?,?,?,?)""",
@@ -123,7 +109,6 @@ def ingest_legacy_run(run_dir: pathlib.Path, conn):
     """Ingest legacy summary.json + junit.xml format"""
     run_id = run_dir.name
     meta = {"run_id": run_id, "timestamp": datetime.now(timezone.utc).isoformat()}
-    source_dir = str(run_dir.resolve())
     
     # Load summary.json if present
     summary = {}
@@ -132,13 +117,13 @@ def ingest_legacy_run(run_dir: pathlib.Path, conn):
 
     conn.execute("""INSERT OR REPLACE INTO runs(
                     run_id, timestamp, git_sha, branch, orin_image, fpga_bitstream,
-                    dataset, operator_graph_version, notes, env, schema_version, source_dir)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    dataset, operator_graph_version, notes, env, schema_version)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                  (run_id, meta["timestamp"],
                   summary.get("git_sha"), summary.get("branch"),
                   summary.get("orin_image"), summary.get("fpga_bitstream"),
                   summary.get("dataset"), summary.get("operator_graph_version"),
-                  summary.get("notes"), None, "legacy", source_dir))
+                  summary.get("notes"), None, "legacy"))
     
     # Parse JUnit
     junit = run_dir / "junit.xml"

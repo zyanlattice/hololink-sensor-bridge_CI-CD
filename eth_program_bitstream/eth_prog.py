@@ -10,9 +10,7 @@ from datetime import datetime
 _script_dir = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(_script_dir))
 
-import control_tapo_kasa
-import verify_camera_imx258
-import verify_eth_speed
+#import control_tapo_kasa
 import terminal_print_formating as tpf
 
 def find_holoscan_dir():
@@ -79,7 +77,7 @@ def create_results_dir() -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     return results_dir
 
-def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
+def main() -> tuple[bool, bool, bool, bool, bool]:
     docker_ok = True
 
     # Get dynamic paths
@@ -192,66 +190,74 @@ def main() -> tuple[bool, bool, bool, bool, bool, bool, bool, bool]:
     print(f"Total programming time: {prog_end - prog_start:.2f} seconds")
     program_success = True
  
-    print("Power cycling the Hololink device to apply new bitstream...")
-    sys.argv = ([
-        "control_tapo_kasa.py",
-        "--toggle_off", "4",
-    ])
-    control_tapo_kasa.main()
+    # print("Power cycling the Hololink device to apply new bitstream...")
+    # sys.argv = ([
+    #     "control_tapo_kasa.py",
+    #     "--toggle_off", "4",
+    # ])
+    #control_tapo_kasa.main()
 
-    print("Shutting down for 3 seconds...")
-    time.sleep(3) # wait for device to power cycle
+    # with cr.RelayController():
+    #     print("  Turning OFF relay 4 to power cycle the device...")
+    #     cr.relay_xoff(4)
 
-    sys.argv = ([
-        "control_tapo_kasa.py",
-        "--toggle_on", "4",
-    ])
-    control_tapo_kasa.main()
+    # print("Shutting down for 3 seconds...")
+    # time.sleep(3) # wait for device to power cycle
 
-    print("Waiting for device to boot up for 6 seconds...")
-    time.sleep(6) # wait for device to boot up
+    # sys.argv = ([
+    #     "control_tapo_kasa.py",
+    #     "--toggle_on", "4",
+    # ])
+    # control_tapo_kasa.main()
 
-    powercycle_ok = True
-    print("Hololink device power cycled successfully.")
+    # with cr.RelayController():
+    #     print("  Turning ON relay 4 to complete power cycling the device...")
+    #     cr.relay_xon(4)
 
-    # Always restore argv before calling a new script
-    sys.argv = ori_argv.copy()
+    # print("Waiting for device to boot up for 6 seconds...")
+    # time.sleep(6) # wait for device to boot up
+
+    # powercycle_ok = True
+    # print("Hololink device power cycled successfully.")
+
+    # # Always restore argv before calling a new script
+    # sys.argv = ori_argv.copy()
     
-    print("Running quick functional test...")
-    sys.argv = [
-        "verify_camera_imx258.py",
-        "--camera-ip", peer_ip,
-        "--max-saves", str(max_saves),
-        "--save-dir", str(results_dir)
-    ]
+    # print("Running quick functional test...")
+    # sys.argv = [
+    #     "verify_camera_imx258.py",
+    #     "--camera-ip", peer_ip,
+    #     "--max-saves", str(max_saves),
+    #     "--save-dir", str(results_dir)
+    # ]
     
-    # Only add --save-images flag if max_saves > 0
-    if max_saves > 0:
-        sys.argv.append("--save-images")
+    # # Only add --save-images flag if max_saves > 0
+    # if max_saves > 0:
+    #     sys.argv.append("--save-images")
 
-    # Initialize variables before try block
-    ethspeed_ok = False
-    camera_ok = False
+    # # Initialize variables before try block
+    # ethspeed_ok = False
+    # camera_ok = False
 
-    camera_ok = verify_camera_imx258.main()
+    # camera_ok = verify_camera_imx258.main()
 
-    # Always restore argv before calling a new script
-    sys.argv = ori_argv.copy()
+    # # Always restore argv before calling a new script
+    # sys.argv = ori_argv.copy()
     
-    print("Running quick functional test...")
-    sys.argv = [
-        "verify_eth_speed.py",
-        "--camera-ip", peer_ip
-    ]
+    # print("Running quick functional test...")
+    # sys.argv = [
+    #     "verify_eth_speed.py",
+    #     "--camera-ip", peer_ip
+    # ]
 
-    ethspeed_ok = verify_eth_speed.main()[0]
+    # ethspeed_ok = verify_eth_speed.main()[0]
 
-    tpf.print_end()
-    print("Bitstream programmer wrapper script completed.")
-    print(f"\n[INFO] All results saved to: {results_dir}")
+    # tpf.print_end()
+    # print("Bitstream programmer wrapper script completed.")
+    # print(f"\n[INFO] All results saved to: {results_dir}")
 
-    return docker_ok, bitstream_ok, fpga_ok, manifest_ok, program_success, powercycle_ok, ethspeed_ok, camera_ok
+    return docker_ok, bitstream_ok, fpga_ok, manifest_ok, program_success
 
 if __name__ == "__main__":
     res = main()
-    print(f"Docker OK: {res[0]}, Bitstream OK: {res[1]}, FPGA OK: {res[2]}, Manifest OK: {res[3]}, Program Success: {res[4]}, Powercycle OK: {res[5]}, Ethspeed OK: {res[6]}, Camera OK: {res[7]}")
+    print(f"Docker OK: {res[0]}, Bitstream OK: {res[1]}, FPGA OK: {res[2]}, Manifest OK: {res[3]}, Program Success: {res[4]}")
