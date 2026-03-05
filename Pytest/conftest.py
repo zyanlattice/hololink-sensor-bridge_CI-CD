@@ -102,6 +102,22 @@ def add_scripts_to_path(scripts_dir):
     sys.path.remove(str(scripts_dir))
 
 
+@pytest.fixture(autouse=True)
+def delay_between_sample_app_tests(request):
+    """
+    Add delay after each sample app test to allow GPU/camera resources to be fully released.
+    This prevents intermittent failures when tests run sequentially due to resource contention.
+    Only applies to tests in test_sample_app.py module.
+    """
+    yield  # Test runs here
+    
+    # Check if this is a test from test_sample_app.py
+    if "test_sample_app" in request.node.fspath.basename:
+        import time
+        # Add 3 second delay after each sample app test
+        time.sleep(3)
+
+
 @pytest.fixture(scope="session")
 def workspace_root():
     """Root directory of holoscan-sensor-bridge workspace."""

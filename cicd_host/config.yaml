@@ -1,0 +1,72 @@
+# Pytest Docker Runner Configuration
+# Edit this file with your actual host credentials and settings
+
+hosts:
+  orin:
+    # Hostname or IP address of the Orin device
+    hostname: "192.168.137.133"
+    
+    # SSH username
+    username: "orin"
+    
+    # SSH password (not recommended for production, use ssh_key instead)
+    # Set to null if using SSH key or SSH agent
+    password: "123"
+    
+    # Path to SSH private key (recommended over password)
+    # Set to null if using password or SSH agent
+    ssh_key: null
+    # Example: ssh_key: "C:/Users/YourName/.ssh/id_rsa"
+    
+    # Workspace root directory on the Orin device
+    workspace_root: "/home/orin/HSB/holoscan-sensor-bridge"
+  
+  thor:
+    # Hostname or IP address of the Thor device
+    hostname: "192.168.137.59"
+    
+    # SSH username
+    username: "thor"
+    
+    # SSH password
+    password: "123"
+    
+    # Path to SSH private key
+    ssh_key: null
+    
+    # Workspace root directory on the Thor device
+    workspace_root: "/home/thor/HSB/holoscan-sensor-bridge"
+
+# Docker configuration
+docker:
+  # Container name for pytest execution
+  container_name: "pytest_runner"
+  
+  # Docker image name
+  image_name: "hololink-demo"
+  
+  # Docker image version (will be read from VERSION file if available)
+  version: "latest"
+
+# Pytest configuration
+pytest:
+  # Default markers to run (empty = run all tests)
+  # Examples: "hardware", "not slow", "camera and not slow"
+  default_markers: ""
+  
+  # Test execution timeout in seconds
+  timeout: 3600
+  
+  # Results directory name pattern on remote host
+  results_dir: "test_results"
+
+# Default test parameters
+defaults:
+  # Default Hololink device IP address
+  hololink_ip: "192.168.0.2"
+  
+  # Default camera ID
+  camera_id: 0
+  
+  # Default device type (cpnx1, cpnx10, avant10, avant25)
+  device_type: "cpnx1"

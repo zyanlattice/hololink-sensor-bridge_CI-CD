@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fpga-uuid", type=str, help="FPGA UUID", default=None)
     parser.add_argument("--peer-ip", type=str, help="Hololink device IP to query FPGA UUID", default=None)
     parser.add_argument("--max-saves", type=int, help="Maximum number of images to save during verification (0 = no images, just test frames)", default=1)
+    #parser.add_argument("--bajoran", action="store_true", help="Enable Bajoran mode for generating manifests with clnx")
     return parser.parse_args()
 
 def get_curr_path() -> str:
@@ -105,6 +106,7 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
     fpga_uuid = args.fpga_uuid 
     peer_ip = args.peer_ip 
     max_saves = args.max_saves
+    #bajoran = args.bajoran
 
     fpga_ok = False
     manifest_ok = False
@@ -134,6 +136,30 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
         fpga_uuid = [ uuid ]
         fpga_ok = True
 
+    # Extract board type and code from bitstream filename
+    # Pattern: fpga_{board_type}_{4digit_code}_{4digit_version}.bit
+    # Examples:
+    #   fpga_bajoran_0000_1234.bit -> board="bajoran", code="00"
+    #   fpga_cpnx_versa_0105_2511.bit -> board="cpnx_versa", code="01"
+    filename = os.path.basename(bitstream_path)
+    name_without_ext = filename.rsplit('.', 1)[0]
+    parts = name_without_ext.split('_')
+    
+    if len(parts) >= 3 and parts[0] == 'fpga':
+        code_part = parts[-2]  # Second-to-last part (e.g., "0000" or "0105")
+        board_type_parts = parts[1:-2]  # Everything between "fpga" and the numeric codes
+        board_type = '_'.join(board_type_parts)  # e.g., "bajoran" or "cpnx_versa"
+        
+        # Get first 2 digits of code
+        code = code_part[:2] if len(code_part) >= 2 else ""
+        
+        # Bajoran board detection: board type is "bajoran" AND code is "00"
+        baj_detect = (board_type == "bajoran" and code == "00")
+    else:
+        baj_detect = False
+    
+    print(f"[INFO] Bajoran board detected based on bitstream file: type='{board_type}', code='{code}'")
+
     #Debug
     #print("FPGA UUID:", fpga_uuid[0])
     print("FPGA UUID:", fpga_uuid)
@@ -154,6 +180,8 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
         sys.argv.extend(["--md5", md5])
     if manifest:
         sys.argv.extend(["--manifest", manifest])
+    if baj_detect:
+        sys.argv.extend(["--clnx-url", "https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/hsb/fpga_ip/2510/fpga_clnx_v2510_ea.bit"])
     tmp, bitstream_ok = generate_manifest_main()
     
     sys.argv = ori_argv
@@ -181,7 +209,10 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
     print("Invoking bitstream programmer...")
     print("The process takes 20 to 30 minutes to complete.")
     prog_start = time.time()
-    os.system(f"cd {holoscan_dir} && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
+    if baj_detect:
+        os.system(f"cd {holoscan_dir} && program_lattice_cpnx100 --accept-eula --skip-power-cycle --skip-program-clnx --skip-verify-clnx {manifest_path}" )
+    else:
+        os.system(f"cd {holoscan_dir} && program_lattice_cpnx_versa --accept-eula --skip-power-cycle {manifest_path}" )
     prog_end = time.time()
 
     time.sleep(0.2) # soak time

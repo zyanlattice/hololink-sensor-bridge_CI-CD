@@ -100,6 +100,9 @@ def main() -> tuple[bool, bool, dict]:
         # Verify datecode if provided
         if datecode:
             try:
+                # Auto-prepend 0x if not present (values are always hex)
+                if not datecode.startswith('0x') and not datecode.startswith('0X'):
+                    datecode = '0x' + datecode
                 expected_datecode = int(datecode, 0)  # Supports hex (0x...) and decimal
                 metrics["expected_datecode_hex"] = f"{expected_datecode:#x}"
                 metrics["expected_datecode_decimal"] = expected_datecode
@@ -122,6 +125,9 @@ def main() -> tuple[bool, bool, dict]:
         # Verify version if provided
         if ver:
             try:
+                # Auto-prepend 0x if not present (values are always hex)
+                if not ver.startswith('0x') and not ver.startswith('0X'):
+                    ver = '0x' + ver
                 expected_ver = int(ver, 0)  # Supports hex (0x...) and decimal
                 metrics["expected_version_hex"] = f"{expected_ver:#x}"
                 metrics["expected_version_decimal"] = expected_ver

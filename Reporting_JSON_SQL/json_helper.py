@@ -287,6 +287,10 @@ class RunReport:
         actual_tests = total - xfailed
         yield_rate = (passed / actual_tests) if actual_tests > 0 else None
 
+        # Calculate total test time
+        total_duration_ms = sum(test.duration_ms for test in self.tests)
+        total_duration_seconds = total_duration_ms / 1000.0
+
         self.summary = {
             "status": overall_status,
             "total_tests": total,
@@ -295,6 +299,8 @@ class RunReport:
             "skipped": skipped,
             "xfailed": xfailed,
             "yield_rate": yield_rate,
+            "total_duration_ms": round(total_duration_ms, 2),
+            "total_duration_seconds": round(total_duration_seconds, 2),
         }
 
         # Add optional notes if provided

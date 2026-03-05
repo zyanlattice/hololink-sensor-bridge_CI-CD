@@ -293,3 +293,38 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Sample code for running the script:
+
+"""
+
+import control_relay_dll
+import time
+
+def main():
+    print("Testing control_relay_dll...")
+    
+    try:
+                
+        with control_relay_dll.RelayController():
+            print("✓ Device initialized")
+            print("  Turning ON relay 4...")
+            control_relay_dll.relay_xon(4)
+            print("  ✓ Relay 4 ON")
+            time.sleep(3)  # Keep relay on for 3 seconds
+            
+            print("  Turning OFF relay 4...")
+            control_relay_dll.relay_xoff(4)
+            print("  ✓ Relay 4 OFF")
+        print("✓ Auto cleanup completed\n")
+
+    except Exception as e:
+        print(f"✗ Error during testing: {e}")
+
+
+if __name__ == "__main__":  
+    main()
+
+
+"""

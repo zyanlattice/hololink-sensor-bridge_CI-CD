@@ -7,7 +7,13 @@ read 0x1000_0000 expected return 0x3
 read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
 read 0x1000_000C expected return 0x5E0
 read 0x2000_000C expected return 0x5E0 (only when HOST_IF = 2)
- 
+
+CPNX 10G <NEW> (Changed due to hololink IP update, 2 fpga merged to 1)
+read 0x1000_0000 expected return 0x3
+read 0x1000_7A00 expected return 0x80
+read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
+read 0x2000_7A00 expected return 0x80 (only when HOST_IF = 2)
+
 CPNX 10G
 read 0x1000_7A00 expected return 0x80
 read 0x2000_0000 expected return 0x3
@@ -88,6 +94,29 @@ def main():
         hololink = hololink_channel.hololink()
 
         hololink.start()
+        
+        # STABILIZATION DELAY AND READINESS CHECK TEMPORARILY DISABLED FOR DEBUGGING
+        # Hypothesis: Reading 0x10000000 may interfere with subsequent reads in same address space
+        # if not regaddr:
+        #     # Test connectivity with a simple read (retry on failure)
+        #     max_retries = 3
+        #     retry_delay = 0.5
+        #     for attempt in range(max_retries):
+        #         try:
+        #             # Try a simple register read to verify device is ready
+        #             test_addr = 0x10000000  # Common base address for all devices
+        #             _ = hololink.read_uint32(test_addr)
+        #             logging.info("Device ready, APB bus accessible")
+        #             break
+        #         except Exception as e:
+        #             if attempt < max_retries - 1:
+        #                 logging.warning(f"Device not ready (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s... ({str(e)})")
+        #                 time.sleep(retry_delay)
+        #             else:
+        #                 logging.error(f"Device failed to become ready after {max_retries} attempts: {str(e)}")
+        #                 metrics["error"] = f"Device not ready after {max_retries} attempts: {str(e)}"
+        #                 print(f"\n📊 Metrics: {metrics}")
+        #                 return False, metrics
 
         if regaddr:
             # Get user input for address to read
@@ -135,11 +164,11 @@ def main():
         if cpnx10:
             addr_val1 = {
                 0x10007A00: 0x80,
-                0x20000000: 0x3  
+                0x10000000: 0x3  
                 }
             addr_val2 = {
-                0x30007A00: 0x80,
-                0x40000000: 0x3     # CPNX 10G HOST_IF = 2
+                0x20007A00: 0x80,
+                0x20000000: 0x3     # CPNX 10G HOST_IF = 2
                 }  
             if hostif == 1:
                 addr_val = addr_val1
