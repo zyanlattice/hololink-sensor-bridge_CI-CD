@@ -1,6 +1,6 @@
 """
-Test suite for verify_camera_driver.py
-Tests IMX258 camera driver detection and initialization.
+Test suite for verify_camera_driver_imx274.py
+Tests IMX274 camera driver detection and initialization.
 """
 
 import pytest
@@ -9,9 +9,9 @@ import pytest
 @pytest.mark.hardware
 @pytest.mark.camera
 def test_camera_driver_detection(hololink_device_ip, record_test_result):
-    """Test that IMX258 camera driver can be detected and initialized."""
+    """Test that IMX274 camera driver can be detected and initialized."""
     # Import the verification script
-    import verify_camera_driver
+    import verify_camera_driver_imx274
     import sys
     import re
     from io import StringIO
@@ -21,7 +21,7 @@ def test_camera_driver_detection(hololink_device_ip, record_test_result):
     
     try:
         sys.argv = [
-            "verify_camera_driver.py",
+            "verify_camera_driver_imx274.py",
             "--peer-ip", hololink_device_ip
         ]
         
@@ -30,8 +30,8 @@ def test_camera_driver_detection(hololink_device_ip, record_test_result):
         sys.stdout = captured_output
         
         try:
-            # verify_camera_driver.py returns (success, message, metrics)
-            success, message, metrics = verify_camera_driver.main()
+            # verify_camera_driver_imx274.py returns (success, message, metrics)
+            success, message, metrics = verify_camera_driver_imx274.main()
             
         except Exception as e:
             success = False
@@ -49,7 +49,7 @@ def test_camera_driver_detection(hololink_device_ip, record_test_result):
             "success": success,
             "message": message,
             "category": "camera",
-            "tags": ["camera", "driver", "imx258"],
+            "tags": ["camera", "driver", "imx274"],
             "stats": metrics
         })
         

@@ -1,4 +1,3 @@
-
 from html import parser
 import logging
 import sys
@@ -8,7 +7,7 @@ import hololink as hololink_module
 
 
 def argument_parser() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Verify IMX258 camera driver functionality")
+    parser = argparse.ArgumentParser(description="Verify IMX274 camera driver functionality")
     parser.add_argument("--peer-ip", type=str, default="192.168.0.2", help="Hololink device IP")
     parser.add_argument("--log-level", type=int, default=logging.INFO, help="Logging level")
     return parser.parse_args()
@@ -18,7 +17,7 @@ def main() -> bool:
     args = argument_parser()
     peer_ip = args.peer_ip
     log_level = args.log_level
-    
+
     # Metrics to track
     metrics = {
         "device_found": False,
@@ -27,7 +26,7 @@ def main() -> bool:
         "camera_modes_list": [],
     }
 
-        # Setup logging
+    # Setup logging
     logging.basicConfig(
         level=log_level,
         format='%(asctime)s - %(levelname)s - %(message)s'
@@ -46,17 +45,17 @@ def main() -> bool:
     # Try to find camera
     hololink_channel = hololink_module.DataChannel(channel_metadata)
     logging.info(f"Channel initialized: {hololink_channel}")
-    camera = hololink_module.sensors.imx258.Imx258(hololink_channel, 0)
+    camera = hololink_module.sensors.imx274.dual_imx274.Imx274Cam(hololink_channel, expander_configuration=0)
     if not camera:
         print(f"\n📊 Metrics: {metrics}")
-        return False, "Failed to find IMX258 camera", metrics
+        return False, "Failed to find IMX274 camera", metrics
     
     metrics["camera_found"] = True
     
     # Print all available camera modes
-    print("Available IMX258 Camera Modes:")
+    print("Available IMX274 Camera Modes:")
     camera_modes = []
-    for mode in hololink_module.sensors.imx258.Imx258_Mode:
+    for mode in hololink_module.sensors.imx274.imx274_mode.Imx274_Mode:
         print(f"  {mode.value}: {mode.name}")
         camera_modes.append(mode.name)
     

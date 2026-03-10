@@ -443,13 +443,14 @@ def main() -> Tuple[bool, str, dict]:
 
     logging.info("Verifying Ethernet link speed...")
     
-    # Detect interface
-    iface = vdd_main(timeout_seconds=10)
-    if not iface:
+    # Detect interface - vdd_main returns (success, message, stats)
+    success, message, detection_stats = vdd_main(timeout_seconds=10)
+    if not success or not detection_stats.get('detected_interface'):
         stats = {"error": "Could not detect Hololink network interface"}
         print(f"\n📊 Metrics: {stats}")
         return False, "Could not detect Hololink network interface", stats
     
+    iface = detection_stats['detected_interface']
     logging.info(f"Detected Hololink interface: {iface}")
     
     # Try multiple methods to read hardware speed

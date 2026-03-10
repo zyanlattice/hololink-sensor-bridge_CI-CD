@@ -225,6 +225,27 @@ fi
 
 if [[ -n "$TEST_FILES" ]]; then
     PYTEST_CMD="$PYTEST_CMD $TEST_FILES"
+else
+    # Auto-discover tests: include imx258-specific tests + camera-agnostic tests
+    # Pattern: test_*_imx258.py OR test_*.py (without any imx number)
+    IMX258_TESTS=""
+    for test_file in test_*.py; do
+        if [[ -f "$test_file" ]]; then
+            # Include if: contains "imx258" OR doesn't contain "imx" followed by digits
+            if [[ "$test_file" =~ imx258 ]] || ! [[ "$test_file" =~ imx[0-9]+ ]]; then
+                IMX258_TESTS="$IMX258_TESTS $test_file"
+            fi
+        fi
+    done
+    
+    if [[ -z "$IMX258_TESTS" ]]; then
+        echo -e "${RED}Error: No test files found for IMX258${NC}"
+        exit 1
+    fi
+    
+    PYTEST_CMD="$PYTEST_CMD $IMX258_TESTS"
+    echo -e "${GREEN}Auto-discovered IMX258 tests:${NC} $IMX258_TESTS"
+    echo ""
 fi
 
 PYTEST_CMD="$PYTEST_CMD $EXTRA_ARGS"

@@ -1,18 +1,17 @@
 """
-Test suite for verify_eth_speed.py
-Tests ethernet link speed and throughput.
+Test suite for verify_eth_speed_imx274.py
+Tests ethernet link speed and throughput with IMX274 camera.
 """
 
 import pytest
 
 
-@pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.network
 @pytest.mark.slow
 def test_ethernet_throughput(hololink_device_ip, camera_mode, record_test_result):
-    """Test actual data throughput from Hololink device."""
-    import verify_eth_speed
+    """Test actual data throughput from Hololink device with IMX274 camera."""
+    import verify_eth_speed_imx274
     import sys
     from io import StringIO
     
@@ -22,7 +21,7 @@ def test_ethernet_throughput(hololink_device_ip, camera_mode, record_test_result
     try:
         # Mock sys.argv to prevent pytest arguments from being parsed
         sys.argv = [
-            "verify_eth_speed.py",
+            "verify_eth_speed_imx274.py",
             "--camera-ip", hololink_device_ip,
             "--camera-mode", str(camera_mode),
             "--frame-limit", "300"
@@ -33,8 +32,8 @@ def test_ethernet_throughput(hololink_device_ip, camera_mode, record_test_result
         sys.stdout = captured_output
         
         try:
-            # verify_eth_speed.py returns (success, message, stats)
-            success, message, stats = verify_eth_speed.main()
+            # verify_eth_speed_imx274.py returns (success, message, stats)
+            success, message, stats = verify_eth_speed_imx274.main()
             
         except Exception as e:
             success = False
@@ -59,7 +58,7 @@ def test_ethernet_throughput(hololink_device_ip, camera_mode, record_test_result
             "success": success,
             "message": message,
             "category": "network",
-            "tags": ["ethernet", "throughput", "performance"],
+            "tags": ["ethernet", "throughput", "performance", "imx274"],
             "stats": stats
         })
         

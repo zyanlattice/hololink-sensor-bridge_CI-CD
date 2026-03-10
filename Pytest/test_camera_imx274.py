@@ -1,36 +1,31 @@
 """
-Test suite for verify_camera_imx258.py
-Tests IMX258 camera functionality including frame capture and FPS.
+Test suite for verify_camera_imx274.py
+Tests IMX274 camera functionality including frame capture and FPS.
 """
 
 import pytest
 
 
-@pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
 @pytest.mark.parametrize("camera_mode,expected_fps", [
-    (0, 60),
-    (1, 30),
+    (0, 60),  # 4K 60fps
+    (1, 60),  # 1080p 60fps
 ])
 def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, device_type, record_test_result):
-    """Test different IMX258 camera modes."""
-    import verify_camera_imx258
+    """Test different IMX274 camera modes."""
+    import verify_camera_imx274
     import sys
     import re
     from io import StringIO
-    
-    # Skip mode 0 for cpnx1 devices (only mode 1 supported)
-    if device_type and device_type.lower() == "cpnx1" and camera_mode == 0:
-        pytest.skip(f"Skipping mode {camera_mode} for device type {device_type} (only mode 1 supported)")
     
     original_argv = sys.argv
     original_stdout = sys.stdout
     
     try:
         sys.argv = [
-            "verify_camera_imx258.py",
+            "verify_camera_imx274.py",
             "--camera-ip", hololink_device_ip,
             "--camera-id", str(camera_id),
             "--camera-mode", str(camera_mode),
@@ -43,8 +38,8 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
         sys.stdout = captured_output
         
         try:
-            # verify_camera_imx258.py returns (success, message, metrics)
-            success, message, metrics = verify_camera_imx258.main()
+            # verify_camera_imx274.py returns (success, message, metrics)
+            success, message, metrics = verify_camera_imx274.main()
                 
         except Exception as e:
             success = False
@@ -86,7 +81,7 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
             "success": success,
             "message": message,
             "category": "camera",
-            "tags": ["camera", "imx258", f"mode_{camera_mode}", f"{expected_fps}fps"],
+            "tags": ["camera", "imx274", f"mode_{camera_mode}", f"{expected_fps}fps"],
             "stats": metrics,
             "artifacts": artifacts
         })
@@ -98,25 +93,27 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
         sys.stdout = original_stdout
 
 
-@pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
-def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test_result, save_dir):
-    """Test IMX258 camera with image saving."""
-    import verify_camera_imx258
+def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save_dir):
+    """Test IMX274 camera with image saving (uses mode 1 for better performance)."""
+    import verify_camera_imx274
     import sys
     import re
     from io import StringIO
     
-    expected_fps = 30 if camera_mode == 1 else 60
+    # Use mode 1 (1080p) instead of mode 0 (4K) for image saving
+    # to avoid excessive HolovizOp rendering overhead
+    camera_mode = 1  
+    expected_fps = 60  # IMX274 mode 1 is 60fps
     
     original_argv = sys.argv
     original_stdout = sys.stdout
     
     try:
         sys.argv = [
-            "verify_camera_imx258.py",
+            "verify_camera_imx274.py",
             "--camera-ip", hololink_device_ip,
             "--camera-id", str(camera_id),
             "--camera-mode", str(camera_mode),
@@ -132,8 +129,8 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
         sys.stdout = captured_output
         
         try:
-            # verify_camera_imx258.py returns (success, message, metrics)
-            success, message, metrics = verify_camera_imx258.main()
+            # verify_camera_imx274.py returns (success, message, metrics)
+            success, message, metrics = verify_camera_imx274.main()
                 
         except Exception as e:
             success = False
@@ -167,8 +164,10 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
                         "meta": {"save_dir": str(save_dir)}
                     })
             
-            success = os.path.isfile(save_dir)
-            message = f"Camera Mode {camera_mode} with image saving: {'PASS' if success else 'FAIL'}"
+            # Validate that images were actually saved
+            if saved_count == 0 or len(png_files) == 0:
+                success = False
+                message = f"Camera Mode {camera_mode} with image saving FAILED: No images saved"
         
         # Remove save_dir from metrics (now in artifact metadata)
         if "save_dir" in metrics:
@@ -178,7 +177,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
             "success": success,
             "message": message,
             "category": "camera",
-            "tags": ["camera", "imx258", f"mode_{camera_mode}", "image_save"],
+            "tags": ["camera", "imx274", f"mode_{camera_mode}", "image_save"],
             "stats": metrics,
             "artifacts": artifacts
         })

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Automated functional verification script for IMX258 camera after bitstream programming.
+Automated functional verification script for IMX274 camera after bitstream programming.
 Runs headless, captures frames, performs basic validation, and exits automatically.
 Can be run standalone without pytest.
 
-IMX258_MODE_1920X1080_60FPS = 0
-    IMX258_MODE_1920X1080_30FPS = 1
-    IMX258_MODE_1920X1080_60FPS_cus = 2
-    IMX258_MODE_1920X1080_30FPS_cus = 3
-    IMX258_MODE_1920X1080_60FPS_new = 4
-    IMX258_MODE_4K_30FPS = 5
-    Unknown = -1
+IMX274_MODE_3840X2160_60FPS = 0
+    IMX274_MODE_1920X1080_60FPS = 1
+    IMX274_MODE_3840X2160_60FPS_12BITS = 2
+    Unknown = 3
 
 """
 
@@ -329,14 +326,23 @@ class VerificationApplication(holoscan.core.Application):
                 self, name="ok", enable_tick=True
             )
             count_condition = self._ok
+        
+        # Set camera mode (required for IMX274)
+        self._camera.set_mode(self._camera_mode)
+        
+        # Log dimensions used for block allocation
+        import logging
+        logging.info(f"[compose()] After set_mode(), camera dimensions: width={self._camera._width}, height={self._camera._height}")
                 
         csi_to_bayer_pool = holoscan.resources.BlockMemoryPool(
             self,
-            name="bayer_pool",
+            name="pool", #bayer_pool 
             storage_type=1,
             block_size=self._camera._width * ctypes.sizeof(ctypes.c_uint16) * self._camera._height,
-            num_blocks=2,
+            num_blocks=4,
         )
+        
+        logging.info(f"[compose()] CSI-to-Bayer pool block_size = {self._camera._width} * {ctypes.sizeof(ctypes.c_uint16)} * {self._camera._height} = {self._camera._width * ctypes.sizeof(ctypes.c_uint16) * self._camera._height} bytes")
         
         csi_to_bayer_operator = hololink_module.operators.CsiToBayerOp(
             self,
@@ -369,17 +375,17 @@ class VerificationApplication(holoscan.core.Application):
             image_processor_operator = hololink_module.operators.ImageProcessorOp(
                 self,
                 name="image_processor",
-                optical_black=50,  # IMX258 optical black value
+                optical_black=50,  # IMX274 optical black value
                 bayer_format=bayer_format.value,
                 pixel_format=pixel_format.value,
             )
 
             rgb_pool = holoscan.resources.BlockMemoryPool(
                 self,
-                name="rgb_pool",
+                name="pool", #rgb_pool
                 storage_type=1,
                 block_size=self._camera._width * self._camera._height * 6,  # RGB888
-                num_blocks=2,
+                num_blocks=4,
             )
             
             bayer_to_rgb_operator = BayerDemosaicOp(
@@ -418,13 +424,14 @@ class VerificationApplication(holoscan.core.Application):
             self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
 
         elif self._fullscreen:
+
             pixel_format = self._camera.pixel_format()
             bayer_format = self._camera.bayer_format()
 
             image_processor_operator = hololink_module.operators.ImageProcessorOp(
                 self,
                 name="image_processor",
-                optical_black=50,  # IMX258 optical black value
+                optical_black=50,  # IMX274 optical black value
                 bayer_format=bayer_format.value,
                 pixel_format=pixel_format.value,
             )
@@ -432,13 +439,13 @@ class VerificationApplication(holoscan.core.Application):
             rgba_components_per_pixel = 4
             rgb_pool = holoscan.resources.BlockMemoryPool(
                 self,
-                name="rgb_pool",
+                name="pool",
                 storage_type=1,
                 block_size=self._camera._width 
                 * self._camera._height 
                 * rgba_components_per_pixel
                 * ctypes.sizeof(ctypes.c_uint16),  # RGA8888
-                num_blocks=2,
+                num_blocks=4,
             )
             
             bayer_to_rgb_operator = BayerDemosaicOp(
@@ -483,6 +490,7 @@ class VerificationApplication(holoscan.core.Application):
             self.add_flow(self._frame_counter, visualizer, {("output", "receivers")})
             if self._save_images:
                 self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
+            #self.add_flow(bayer_to_rgb_operator, visualizer, {("transmitter", "receivers")})
 
         else:
             # Simple frame counter for stats only
@@ -500,8 +508,6 @@ class VerificationApplication(holoscan.core.Application):
     def get_fps(self) -> float:
         if not self._frame_counter or not self._frame_counter.start_time:
             return 0.0
-        #elapsed = time.time() - self._frame_counter.start_time
-        #return self._frame_counter.frame_count / elapsed if elapsed > 0 else 0.0
         return self._frame_counter.fps
     
     def get_saved_count(self) -> int:
@@ -536,13 +542,13 @@ def verify_camera_functional(
     max_saves: int = 5
 ) -> Tuple[bool, str, dict]:
     """
-    Verify IMX258 camera functionality after bitstream programming.
+    Verify IMX274 camera functionality after bitstream programming.
     
     Args:
         holoviz: Whether to run with holoviz (GUI)
         camera_ip: IP address of the Hololink device
-        camera_id: Camera index (0 or 1)
-        camera_mode: Camera mode (see Imx258_Mode enum)
+        camera_id: Camera index (always 0 for IMX274)
+        camera_mode: Camera mode (see Imx274_Mode enum)
         frame_limit: Number of frames to capture
         timeout_seconds: Maximum time to wait for frames
         min_fps: Minimum acceptable FPS
@@ -568,8 +574,8 @@ def verify_camera_functional(
     hololink_module.logging_level(log_level)
     
     logging.info("=" * 80)
-    logging.info(f"Starting IMX258 Camera Functional Verification")
-    logging.info(f"Camera IP: {camera_ip}, Camera: IMX258, Camera ID: {camera_id}, Mode: {camera_mode}")
+    logging.info(f"Starting IMX274 Camera Functional Verification")
+    logging.info(f"Camera IP: {camera_ip}, Camera: IMX274, Camera ID: {camera_id}, Mode: {camera_mode}")
     logging.info(f"Frame limit: {frame_limit}, Timeout: {timeout_seconds}s")
     if save_images:
         logging.info(f"Image saving: ENABLED (max {max_saves} images to {save_dir})")
@@ -608,14 +614,14 @@ def verify_camera_functional(
         
         logging.info("Hololink device found")
         
-        # Initialize IMX258 camera
+        # Initialize IMX274 camera (expander_configuration defaults to 0)
         hololink_channel = hololink_module.DataChannel(channel_metadata)
-        camera = hololink_module.sensors.imx258.Imx258(hololink_channel, camera_id)
-        camera_mode_enum = hololink_module.sensors.imx258.Imx258_Mode(camera_mode)
+        camera = hololink_module.sensors.imx274.dual_imx274.Imx274Cam(hololink_channel, expander_configuration=0)
+        camera_mode_enum = hololink_module.sensors.imx274.imx274_mode.Imx274_Mode(camera_mode)
         
         headless = not holoviz
 
-        # Create application
+        # Create application FIRST (before configuring camera) - matches working linux_imx274_player.py pattern
         application = VerificationApplication(
             headless,
             cu_context,
@@ -629,37 +635,61 @@ def verify_camera_functional(
             save_dir=save_dir,
             max_saves=max_saves,
             frames_to_save=frames_to_save,
-            fullscreen=holoviz,              # Use fullscreen args as flag if holoviz is enabled
+            fullscreen=holoviz,
         )
-        
+
         # Start Hololink and camera
         logging.info("Starting Hololink and camera...")
         hololink = hololink_channel.hololink()
         hololink.start()
-
+        hololink.reset()  
+        
         application._hololink = hololink  # ← Set hololink reference
         
+        # Configure camera AFTER application creation (matches linux_imx274_player.py)
+        camera.setup_clock()
         camera.configure(camera_mode_enum)
+        camera.set_digital_gain_reg(0x4)  # Set digital gain (from linux_imx274_player.py)
 
         version = camera.get_version()
         logging.info(f"Camera version: {version}")
 
-        # Set focus
-        camera.set_focus(-140)
-
-        # Increase brightness: boost exposure and gain
-        # Exposure: 0x0600 (1536 lines, up from default 0x0438=1080)
-        # Analog gain: 0x0180 (384 = 1.5x gain = 3.5dB, up from default 0x0100=256)
+        # ==================================================================================
+        # CRITICAL: DO NOT manually set exposure or analog gain after configure()
+        # ==================================================================================
         # 
-        # Brightness adjustment guide:
-        # - Too dark: Increase exposure (0x0700, 0x0800) or gain (0x0200=2x, 0x0300=3x)
-        # - Too bright: Decrease exposure (0x0400, 0x0300) or gain (0x0080=0.5x)
-        # - Prefer exposure over gain for better image quality (less noise)
-        camera.set_exposure(0x0600)
-        camera.set_analog_gain(0x0180)
-        logging.info("Applied exposure=0x0600 and analog_gain=0x0180 for better brightness")
+        # camera.configure() writes MODE-SPECIFIC exposure and timing registers.
+        # Each mode has carefully tuned exposure values for its frame rate and resolution:
+        #
+        #   Mode 0 (4K 60fps):     exposure = 0x000C (12 lines)  - MINIMUM for 60fps timing
+        #   Mode 1 (1080p 60fps):  exposure = 0x0008 (8 lines)   - even shorter
+        #   Mode 2 (4K 60fps 12b): exposure = 0x000C (12 lines)
+        #
+        # Calling set_exposure_reg(0x0600) OVERWRITES the mode-specific value with 1536 lines
+        # which is 128× longer than Mode 0 expects. This causes:
+        #   ✗ Timing violations (exposure exceeds frame period at 60fps)
+        #   ✗ Sensor outputs black frames or desyncs CSI interface
+        #   ✗ Mode 0 (4K) particularly sensitive due to tight timing margins
+        #
+        # Why it seemed to work for Mode 1:
+        #   - Mode 1 has different frame period calculations, slightly more tolerant
+        #   - But still produces unreliable results with manual exposure override
+        #
+        # Analog gain (0x0180) may be adjustable since modes don't set it explicitly,
+        # but interacts badly with the exposure timing violation.
+        #
+        # IF BRIGHTNESS ADJUSTMENT IS NEEDED:
+        #   1. Modify the mode configuration arrays in imx274_mode.py
+        #   2. Adjust exposure by SMALL amounts (±10-20%) from mode-specific baseline
+        #   3. Test each mode independently - they have different timing constraints
+        #   4. Never exceed the frame period: exposure_time < (1/fps)
+        #
+        # Reference: imx274_mode.py lines 131-132 (Mode 0), lines 321-322 (Mode 1)
+        # ==================================================================================
         
-        camera.start()
+        #camera.set_exposure_reg(0x0600)      # ← Overwrites mode-specific 0x000C, causes black screen
+        #camera.set_analog_gain_reg(0x0180)   # ← May be safe alone, but interacts with exposure issue
+        #logging.info("Applied exposure=0x0600 and analog_gain=0x0180 for better brightness")
         
         # Run verification
         logging.info(f"Capturing {frame_limit} frames...")
@@ -721,8 +751,6 @@ def verify_camera_functional(
             app_thread.join(timeout=3.0)
             if app_thread.is_alive():
                 logging.warning("Application thread still alive after 3s timeout")
-                # Thread is stuck - this is the bug we need to fix
-                # Continue anyway since we have the frame data we need
         
         elapsed_time = time.time() - start_time
         
@@ -731,7 +759,7 @@ def verify_camera_functional(
         avg_fps = application.get_fps()
         
         def get_cam_mode_name(cam_mode):
-                for mode in hololink_module.sensors.imx258.Imx258_Mode:
+                for mode in hololink_module.sensors.imx274.imx274_mode.Imx274_Mode:
                     if mode.value == cam_mode: 
                         logging.info(f"Camera mode: {mode.name}")
                         logging.info(f"Mode number: {mode.value}")
@@ -752,7 +780,6 @@ def verify_camera_functional(
         logging.info(f"Computed min_fps: {computed_min_fps:.2f} (80% of expected {expected_fps})")
         logging.info(f"Average FPS: {avg_fps:.2f}, Frame count: {frame_count}, Elapsed time: {elapsed_time:.2f}s")
 
-
         stats = {
             "frame_count": frame_count,
             "elapsed_time": elapsed_time,
@@ -763,21 +790,13 @@ def verify_camera_functional(
         }
         
         if save_images:
-            saved_count = application.get_saved_count()  # Use the new method
+            saved_count = application.get_saved_count()
             stats["saved_images"] = saved_count
             stats["save_dir"] = save_dir
         
         gap_stats = application.get_frame_gap_stats(ex_fps=60.0)
         stats.update(gap_stats)
 
-        # logging.info("=" * 80)
-        # logging.info(f"Verification complete: {frame_count}/{frame_limit} frames received")
-        # logging.info(f"Elapsed time: {elapsed_time:.2f}s")
-        # logging.info(f"Average FPS: {avg_fps:.2f}")
-        # if save_images:
-        #     logging.info(f"Saved images: {saved_count}/{max_saves}")
-        # logging.info("=" * 80)
-        
         # Print to stdout for subprocess capture
         print(f"Average FPS: {avg_fps:.2f}")
         
@@ -788,7 +807,7 @@ def verify_camera_functional(
         if not save_images and frame_count < frame_limit * 0.9:
             return False, f"Insufficient frames received: {frame_count}/{frame_limit}", stats
         
-        if avg_fps < computed_min_fps and frame_count > 10:  # Only check FPS if we got enough frames
+        if avg_fps < computed_min_fps and frame_count > 10:
             if gap_stats.get("frame_gap_test_result") == "fail":
                 return False, f"FPS too low: {avg_fps:.2f} < {computed_min_fps:.2f} (80% of {expected_fps}) & Frame gap test failed: avg gap {gap_stats.get('avg_gap_ms')}ms >= {gap_stats.get('expected_interval_ms') * 1.2} ({gap_stats.get('expected_interval_ms')} + 20%)", stats
             return False, f"FPS too low: {avg_fps:.2f} < {computed_min_fps:.2f} (80% of expected {expected_fps})", stats
@@ -805,13 +824,12 @@ def verify_camera_functional(
         stop_event.set()
         
         # CLEANUP SEQUENCE (must be in correct order):
-        # 1. Stop hololink (closes socket, which stops frame reception)
-        # 2. This allows GXF receiver to unblock
-        # 3. GXF graph completes naturally (doesn't hang)
-        # 4. Then destroy CUDA context
-        #
-        # DO NOT call camera.stop() - GXF + hololink.stop() handles camera shutdown
-        # DO NOT try to interrupt app from here - it should already be done
+        # 1. Stop hololink (closes socket, stops frame reception, implicitly stops camera streaming)
+        # 2. GXF receiver unblocks and graph completes
+        # 3. Reset framework to clear buffers
+        # 4. Destroy CUDA context
+        # 
+        # DO NOT call camera.stop() - hololink.stop() handles sensor shutdown
         
         if hololink:
             try:
@@ -820,24 +838,18 @@ def verify_camera_functional(
             except Exception as e:
                 logging.error(f"Error stopping hololink: {e}", exc_info=True)
         
-        # Now give app thread a chance to finish since socket is closed
         if app_thread and app_thread.is_alive():
             logging.info("Waiting for application thread to finish after hololink.stop()...")
             app_thread.join(timeout=5.0)
             if app_thread.is_alive():
                 logging.error("Application thread still alive after 5s (receiver may be stuck)")
-                # At this point hololink socket is closed, so receiver will eventually error
-                # But we can't wait forever
         
-        # CRITICAL: Reset hololink framework to clear global device registry
-        # This prevents cached/buffered frames from previous runs affecting the next run
         try:
             logging.info("Resetting Hololink framework (clears global device registry)...")
             hololink_module.Hololink.reset_framework()
         except Exception as e:
             logging.warning(f"Error resetting hololink framework: {e}")
         
-        # Destroy CUDA context
         if cu_context:
             try:
                 logging.info("Destroying CUDA context...")
@@ -850,9 +862,9 @@ def verify_camera_functional(
 
 
 def main() -> bool:
-    parser = argparse.ArgumentParser(description="Verify IMX258 camera functionality")
+    parser = argparse.ArgumentParser(description="Verify IMX274 camera functionality")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
-    parser.add_argument("--camera-id", type=int, default=0, choices=[0, 1], help="Camera index")
+    parser.add_argument("--camera-id", type=int, default=0, help="Camera index (always 0 for IMX274)")
     parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to capture")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
@@ -869,8 +881,8 @@ def main() -> bool:
     
     # If listing modes, do that and exit
     if args.list_mode:
-        print("Available IMX258 Camera Modes:")
-        for mode in hololink_module.sensors.imx258.Imx258_Mode:
+        print("Available IMX274 Camera Modes:")
+        for mode in hololink_module.sensors.imx274.imx274_mode.Imx274_Mode:
             print(f"  {mode.value}: {mode.name}")
         sys.exit(0)
 
