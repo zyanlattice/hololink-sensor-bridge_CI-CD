@@ -24,6 +24,7 @@ import time
 import threading
 import os
 from typing import Tuple
+from pathlib import Path
 import numpy as np
 import terminal_print_formating as tpf
 
@@ -36,6 +37,43 @@ from holoscan.resources import UnboundedAllocator
 import hololink as hololink_module
 
 
+def _find_project_root() -> Path:
+    """
+    Find the project root directory (where CI_CD/ should be created).
+    
+    Walks up from the script location looking for workspace markers:
+    - cicd_host/ directory
+    - Pytest/ directory  
+    - .git directory
+    Or stops at a directory named 'CI_CD' and returns its parent.
+    
+    Returns the parent directory where CI_CD/ should be created.
+    """
+    current = Path(__file__).resolve().parent
+    
+    # Walk up the directory tree
+    for parent in [current] + list(current.parents):
+        # If we're inside CI_CD already, return its parent to avoid CI_CD/CI_CD/
+        if parent.name == "CI_CD":
+            return parent.parent
+            
+        # Look for workspace markers that indicate the root
+        if any([
+            (parent / "cicd_host").exists(),
+            (parent / "Pytest").exists(),
+            (parent / ".git").exists(),
+        ]):
+            return parent
+    
+    # Fallback: parent of scripts directory
+    return current.parent if current.name == "scripts" else current
+
+
+# Default save directory: [project_root]/CI_CD/tmp_img_folder
+_PROJECT_ROOT = _find_project_root()
+DEFAULT_SAVE_DIR = str(_PROJECT_ROOT / "CI_CD" / "tmp_img_folder")
+
+
 class TimeoutError(Exception):
     """Raised when verification times out."""
     pass
@@ -43,9 +81,9 @@ class TimeoutError(Exception):
 class ImageSaverOp(holoscan.core.Operator):
     """Operator to save frames as images."""
     
-    def __init__(self, *args, save_dir="/tmp/camera_verification", max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
+    def __init__(self, *args, save_dir=None, max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.save_dir = save_dir
+        self.save_dir = save_dir or DEFAULT_SAVE_DIR
         self.max_saves = max_saves
         self.saved_count = 0
         self.frames_to_save = frames_to_save or []  # List of frame numbers to save
@@ -138,9 +176,9 @@ class ImageSaverOp(holoscan.core.Operator):
 class ScreenShotOp(holoscan.core.Operator):
     """Operator to save frames as images."""
     
-    def __init__(self, *args, save_dir="/tmp/camera_verification", max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
+    def __init__(self, *args, save_dir=None, max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.save_dir = save_dir
+        self.save_dir = save_dir or DEFAULT_SAVE_DIR
         self.max_saves = max_saves
         self.saved_count = 0
         self.frames_to_save = frames_to_save or []  # List of frame numbers to save
@@ -149,7 +187,7 @@ class ScreenShotOp(holoscan.core.Operator):
         self.camera = camera  # ← Add camera reference
         self.hololink = hololink  # ← Add hololink reference
         self.save_images = save_images
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
         
     def setup(self, spec):
         spec.input("input")
@@ -304,7 +342,7 @@ class VerificationApplication(holoscan.core.Application):
         frame_limit,
         hololink=None,
         save_images=False,
-        save_dir="/tmp/camera_verification",
+        save_dir=None,
         max_saves=5,
         frames_to_save=None,
         fullscreen=False,
@@ -321,7 +359,7 @@ class VerificationApplication(holoscan.core.Application):
         self._camera_mode = camera_mode
         self._frame_limit = frame_limit
         self._save_images = save_images
-        self._save_dir = save_dir
+        self._save_dir = save_dir or DEFAULT_SAVE_DIR
         self._max_saves = max_saves
         self._frames_to_save = frames_to_save or []
         self._frame_counter = None
@@ -556,7 +594,7 @@ def verify_camera_functional(
     min_fps: float = 10.0,
     log_level: int = logging.INFO,
     save_images: bool = False,
-    save_dir: str = "/tmp/camera_verification",
+    save_dir: str = None,
     max_saves: int = 5,
     raw: bool = False,
     test_frame: bool = False,
@@ -596,6 +634,10 @@ def verify_camera_functional(
     
     frames_to_save = _compute_img_fac(frame_limit, max_saves) if save_images else []
     logging.info(f"Frames to save: {frames_to_save}")  # Debug
+    
+    # Use default save directory if not specified
+    if save_dir is None:
+        save_dir = DEFAULT_SAVE_DIR
 
     hololink_module.logging_level(log_level)
     
@@ -606,6 +648,14 @@ def verify_camera_functional(
     if save_images:
         logging.info(f"Image saving: ENABLED (max {max_saves} images to {save_dir})")
     logging.info("=" * 80)
+    
+    # Create save directory early to catch permission/path errors before camera setup
+    if save_images:
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            logging.info(f"Created/verified save directory: {save_dir}")
+        except Exception as e:
+            return False, f"Failed to create save directory '{save_dir}': {str(e)}", {}
     
     hololink = None
     camera = None
@@ -903,7 +953,7 @@ def main() -> bool:
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
     parser.add_argument("--log-level", type=int, default=logging.INFO, help="Logging level")
     parser.add_argument("--save-images", action="store_true", default=False, help="Save captured frames as images")
-    parser.add_argument("--save-dir", type=str, default="/home/orin/HSB/CI_CD/test_image_folder", help="Directory to save images")
+    parser.add_argument("--save-dir", type=str, default=None, help=f"Directory to save images (default: {DEFAULT_SAVE_DIR})")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
     parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
     parser.add_argument("--holoviz", action="store_true", help="Run with holoviz (GUI)")
