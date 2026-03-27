@@ -167,20 +167,32 @@ class ScreenShotOp(holoscan.core.Operator):
         
         from PIL import ImageGrab
         try:
+            import cupy as cp
+            
+            # Save tensor data as .npy
+            tensor = in_message.get("")
+            cuda_array = cp.asarray(tensor)
+            host_array = cp.asnumpy(cuda_array)
             
             timestamp = time.time()
-            filename = os.path.join(self.save_dir, f"frame_{timestamp:.3f}_{self.current_frame:04d}.png")
+            npy_filename = os.path.join(self.save_dir, f"frame_{timestamp:.3f}_{self.current_frame:04d}.npy")
             
+            # Save .npy file
+            np.save(npy_filename, host_array)
+            logging.info(f"Saved tensor data: {npy_filename}")
+            logging.info(f"  Shape: {host_array.shape}, dtype: {host_array.dtype}, "
+                        f"min: {host_array.min()}, max: {host_array.max()}")
             
+            # Take screenshot of HolovizOp visualization
+            png_filename = npy_filename.replace('.npy', '.png')
             screenshot = ImageGrab.grab()
-            screenshot_path = filename
-            screenshot.save(screenshot_path)
-            logging.info(f"Saved HolovizOp screenshot: {screenshot_path}")
+            screenshot.save(png_filename)
+            logging.info(f"Saved HolovizOp screenshot: {png_filename}")
 
             self.saved_count += 1
 
         except Exception as e:
-            logging.warning(f"Could not capture screenshot: {e}")
+            logging.warning(f"Could not save frame data: {e}")
 
 
 class FrameCounterOp(holoscan.core.Operator):
