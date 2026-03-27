@@ -5,10 +5,9 @@ Tests IMX274 camera functionality including frame capture and FPS.
 
 import pytest
 
-
+@pytest.mark.quick
 @pytest.mark.hardware
 @pytest.mark.camera
-@pytest.mark.slow
 @pytest.mark.parametrize("camera_mode,expected_fps", [
     (0, 60),  # 4K 60fps
     (1, 60),  # 1080p 60fps

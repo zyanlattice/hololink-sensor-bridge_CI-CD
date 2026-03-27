@@ -7,6 +7,7 @@ Runs eth_prog_docker_wrapper.py on remote Jetson host.
 import argparse
 import subprocess
 import sys
+import time
 import yaml
 from pathlib import Path
 from typing import Dict, Tuple
@@ -43,7 +44,8 @@ def parse_args() -> argparse.Namespace:
                        help="Host type to connect to (orin or thor)")
     parser.add_argument("--md5", type=str, required=False, default="", help="Bitstream MD5 checksum (optional)")
     parser.add_argument("--version", type=str, required=True, help="Bitstream version")
-    parser.add_argument("--bitstream-path", type=str, required=True, help="Path to bitstream file on remote host")
+    parser.add_argument("--bitstream-path", type=str, required=True, 
+                       help="Path to bitstream file (can be local Windows path or just filename)")
     parser.add_argument("--peer-ip", type=str, required=False, default="192.168.0.2", help="Hololink device IP address")
     
     
@@ -56,18 +58,24 @@ def parse_args() -> argparse.Namespace:
 
 def build_remote_command(
     args: argparse.Namespace,
-    workspace_root: str
+    workspace_root: str,
+    username: str
 ) -> str:
     """Build the command to execute eth_prog_docker_wrapper.py on remote host."""
     
     ci_cd_path = f"{workspace_root}/../CI_CD"
     wrapper_script = f"{ci_cd_path}/eth_program_bitstream/eth_prog_docker_wrapper.py"
     
+    # Convert Windows path to Linux path on remote system
+    # Extract just the filename from the bitstream path
+    bitstream_filename = Path(args.bitstream_path).name
+    remote_bitstream_path = f"/home/{username}/HSB/CI_CD/bitstream/{bitstream_filename}"
+    
     # Build Python command with -u flag for unbuffered output
     # This ensures output appears in chronological order when run over SSH
     cmd = f"python3 -u {wrapper_script}"
     cmd += f" --version {args.version}"
-    cmd += f" --bitstream-path {args.bitstream_path}"
+    cmd += f" --bitstream-path {remote_bitstream_path}"
     cmd += f" --peer-ip {args.peer_ip}"
     cmd += f" --workspace-root {workspace_root}"
     
@@ -222,7 +230,8 @@ def main() -> int:
     print("=" * 90)
     print(f"Target Host:     {args.host_type} ({username}@{hostname})")
     print(f"Version:         {args.version}")
-    print(f"Bitstream Path:  {args.bitstream_path}")
+    print(f"Bitstream File:  {Path(args.bitstream_path).name}")
+    print(f"Remote Path:     /home/{username}/HSB/CI_CD/bitstream/{Path(args.bitstream_path).name}")
     print(f"Peer IP:         {args.peer_ip}")
     print(f"Workspace Root:  {workspace_root}")
     print("=" * 90 + "\n")
@@ -235,7 +244,7 @@ def main() -> int:
         print("Warning: Failed to copy bitstream files, but continuing anyway...")
     
     # Build remote command
-    remote_command = build_remote_command(args, workspace_root)
+    remote_command = build_remote_command(args, workspace_root, username)
     
     # Build SSH command
     ssh_cmd, _, _ = build_ssh_command(config, args.host_type, remote_command)
@@ -244,7 +253,22 @@ def main() -> int:
     exit_code = execute_ssh_command(ssh_cmd, dry_run=args.dry_run)
     
     print("Performing power cycle on Hololink device...")
+    try:
+                
+        with relay.RelayController():
+            print("✓ Device initialized")
+            print("  Turning ON relay 4...")
+            relay.relay_xon(4)
+            print("  ✓ Relay 4 ON")
+            time.sleep(3)  # Keep relay on for 3 seconds
+            
+            print("  Turning OFF relay 4...")
+            relay.relay_xoff(4)
+            print("  ✓ Relay 4 OFF")
+        print("✓ Power cycle completed\n")
 
+    except Exception as e:
+        print(f"✗ Error during controlling relay: {e}")
 
     # Print summary
     if not args.dry_run:

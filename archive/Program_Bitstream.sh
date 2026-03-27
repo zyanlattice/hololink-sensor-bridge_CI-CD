@@ -106,6 +106,7 @@ docker run "${DOCKER_IT[@]}" --rm \
   --runtime=nvidia \
   --shm-size=1gb \
   --privileged \
+  --ulimit stack=33554432 \
   --name "$CONTAINER_NAME" \
   -v "${ROOT}":"${ROOT}" \
   -v /home/lattice:/home/lattice \

@@ -4,7 +4,7 @@
 hosts:
   orin:
     # Hostname or IP address of the Orin device
-    hostname: "192.168.137.133"
+    hostname: "192.168.1.132"
     
     # SSH username
     username: "orin"

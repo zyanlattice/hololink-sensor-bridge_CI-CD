@@ -3,6 +3,9 @@
 
 set -e  # Exit on error
 
+# Increase stack size to 32 MB to prevent Holoscan RuntimeWarning
+ulimit -s 32768
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,6 +43,7 @@ print_usage() {
     echo "  -h, --help           Show this help message"
     echo "  -m, --markers MARKS  Run tests with specific markers (e.g., 'hardware', 'not slow')"
     echo "  -t, --tests FILES    Run specific test files (space-separated)"
+    echo "  --quick              Run only quick tests (< 1 minute, smoke tests)"
     echo "  -vv, --very-verbose  Very verbose output"
     echo "  --device DEVICE      Set device type (cpnx1, cpnx10, avant10, avant25)"
     echo "  --camera-id ID       Set camera ID (default: 0)"
@@ -51,6 +55,7 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0                           # Run all IMX274 tests"
+    echo "  $0 --quick                   # Run only quick tests (fast smoke tests)"
     echo "  $0 -m hardware               # Run hardware tests"
     echo "  $0 -t test_camera_imx274.py  # Run specific test file"
     echo "  $0 --device avant10 --version 2511 --datecode 3446  # Full config"
@@ -70,6 +75,10 @@ while [[ $# -gt 0 ]]; do
         -t|--tests)
             TEST_FILES="$2"
             shift 2
+            ;;
+        --quick)
+            MARKERS="quick"
+            shift
             ;;
         -vv|--very-verbose)
             VERBOSE="-vv"

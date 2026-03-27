@@ -8,7 +8,7 @@ read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
 read 0x1000_000C expected return 0x5E0
 read 0x2000_000C expected return 0x5E0 (only when HOST_IF = 2)
 
-CPNX 10G <NEW> (Changed due to hololink IP update, 2 fpga merged to 1)
+CPNX 10G <NEW> (Changed due to hololink IP update, 2 fpga merged to 1) (RRRRREVERTED BACK TO ORIGINAL ADDRESSES DUE TO NEW INFO FROM LATTICE)
 read 0x1000_0000 expected return 0x3
 read 0x1000_7A00 expected return 0x80
 read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
@@ -164,11 +164,11 @@ def main():
         if cpnx10:
             addr_val1 = {
                 0x10007A00: 0x80,
-                0x10000000: 0x3  
+                0x20000000: 0x3  
                 }
             addr_val2 = {
-                0x20007A00: 0x80,
-                0x20000000: 0x3     # CPNX 10G HOST_IF = 2
+                0x30007A00: 0x80,
+                0x40000000: 0x3     # CPNX 10G HOST_IF = 2
                 }  
             if hostif == 1:
                 addr_val = addr_val1

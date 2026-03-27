@@ -30,6 +30,7 @@ import ctypes
 import os
 import platform
 from ctypes import Structure, POINTER, c_char_p, c_int, c_void_p
+import time
 
 # ============================================================================
 # Library Setup
@@ -192,6 +193,45 @@ def relay_xoff(relay):
     result = relay_lib.usb_relay_device_close_one_relay_channel(_device_handle, relay)
     return result == 0
 
+
+def relay_NC_power_cycle(relay, delay=3):
+    """
+    Power cycle a specific relay (ON then OFF).
+    
+    Args:
+        relay (int): Relay number (1-4 for 4-channel board)
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if _device_handle is None:
+        raise RuntimeError("Relay not initialized. Call initialize() first.")
+    
+    relay_lib = _load_library()
+    on_result = relay_lib.usb_relay_device_open_one_relay_channel(_device_handle, relay)
+    time.sleep(delay)  # Short delay to ensure power cycle
+    off_result = relay_lib.usb_relay_device_close_one_relay_channel(_device_handle, relay)
+    return off_result == 0 and on_result == 0
+
+
+def relay_NO_power_cycle(relay, delay=3):
+    """
+    Power cycle a specific relay (OFF then ON).
+    
+    Args:
+        relay (int): Relay number (1-4 for 4-channel board)
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if _device_handle is None:
+        raise RuntimeError("Relay not initialized. Call initialize() first.")
+    
+    relay_lib = _load_library()
+    off_result = relay_lib.usb_relay_device_close_one_relay_channel(_device_handle, relay)
+    time.sleep(delay)  # Short delay to ensure power cycle
+    on_result = relay_lib.usb_relay_device_open_one_relay_channel(_device_handle, relay)
+    return off_result == 0 and on_result == 0
 
 def cleanup():
     """

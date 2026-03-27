@@ -17,6 +17,7 @@ IMX258_MODE_1920X1080_60FPS = 0
 import argparse
 import ctypes
 import logging
+import math
 import re
 import sys
 import time
@@ -168,7 +169,7 @@ class ScreenShotOp(holoscan.core.Operator):
         try:
             
             timestamp = time.time()
-            filename = os.path.join(self.save_dir, f"frame_{self.current_frame:04d}_{timestamp:.3f}.png")
+            filename = os.path.join(self.save_dir, f"frame_{timestamp:.3f}_{self.current_frame:04d}.png")
             
             
             screenshot = ImageGrab.grab()
@@ -295,6 +296,7 @@ class VerificationApplication(holoscan.core.Application):
         max_saves=5,
         frames_to_save=None,
         fullscreen=False,
+        raw=False
     ):
         super().__init__()
         self._cuda_context = cuda_context
@@ -312,6 +314,7 @@ class VerificationApplication(holoscan.core.Application):
         self._frames_to_save = frames_to_save or []
         self._frame_counter = None
         self._image_saver = None
+        self._raw = raw
 
     def compose(self):
         # Use CountCondition to limit frames (like linux_imx258_player.py)
@@ -412,9 +415,13 @@ class VerificationApplication(holoscan.core.Application):
             )
                      
 
-            self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
-            self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
-            self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
+            
+            if self._raw:
+                self.add_flow(csi_to_bayer_operator, self._frame_counter, {("output", "input")})
+            else:
+                self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
+                self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
+                self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
             self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
 
         elif self._fullscreen:
@@ -477,9 +484,14 @@ class VerificationApplication(holoscan.core.Application):
                 framebuffer_srgb=True,
             )
 
-            self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
-            self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
-            self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
+            
+            if self._raw:
+                self.add_flow(csi_to_bayer_operator, self._frame_counter, {("output", "input")})
+            else:
+                self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
+                self.add_flow(image_processor_operator, bayer_to_rgb_operator, {("output", "receiver")})
+                self.add_flow(bayer_to_rgb_operator, self._frame_counter, {("transmitter", "input")})
+
             self.add_flow(self._frame_counter, visualizer, {("output", "receivers")})
             if self._save_images:
                 self.add_flow(self._frame_counter, self._image_saver, {("output", "input")})
@@ -533,7 +545,11 @@ def verify_camera_functional(
     log_level: int = logging.INFO,
     save_images: bool = False,
     save_dir: str = "/tmp/camera_verification",
-    max_saves: int = 5
+    max_saves: int = 5,
+    raw: bool = False,
+    test_frame: bool = False,
+    lane_num: int = 4,
+    lane_rate: int = 371
 ) -> Tuple[bool, str, dict]:
     """
     Verify IMX258 camera functionality after bitstream programming.
@@ -550,6 +566,10 @@ def verify_camera_functional(
         save_images: Whether to save captured frames as images
         save_dir: Directory to save images
         max_saves: Maximum number of images to save
+        raw: Whether to save raw Bayer frames instead of RGB images
+        test_frame: Whether to use a color bar test frame for validation (overrides camera input)
+        lane_num: Number of MIPI lanes to configure
+        lane_rate: MIPI lane rate in Mbps
     Returns:
         Tuple of (success: bool, message: str, stats: dict)
     """
@@ -559,8 +579,8 @@ def verify_camera_functional(
         """Compute which frame numbers to save, evenly distributed."""
         if max_saves <= 0 or frame_limit <= 0:
             return []
-        interval = frame_limit / max_saves
-        return [int((i + 1) * interval) for i in range(max_saves)]
+        interval = math.floor(frame_limit / (max_saves + 1))
+        return [int((i+1) * interval) for i in range(max_saves)]
     
     frames_to_save = _compute_img_fac(frame_limit, max_saves) if save_images else []
     logging.info(f"Frames to save: {frames_to_save}")  # Debug
@@ -630,15 +650,27 @@ def verify_camera_functional(
             max_saves=max_saves,
             frames_to_save=frames_to_save,
             fullscreen=holoviz,              # Use fullscreen args as flag if holoviz is enabled
+            raw=raw
         )
         
         # Start Hololink and camera
         logging.info("Starting Hololink and camera...")
         hololink = hololink_channel.hololink()
         hololink.start()
+        hololink.reset()
 
         application._hololink = hololink  # ← Set hololink reference
         
+        if test_frame:
+            logging.info("Using color bar test frame instead of camera input")
+            camera.set_register(0x600,0x0)
+            camera.set_register(0x601,0x03)
+            camera.set_register(0x602,0x03)
+            camera.set_register(0x603,0xFF)
+            camera.set_register(0x606,0x03)
+            camera.set_register(0x607,0xFF)
+
+        camera.configure_mipi_lane(lane_num, lane_rate)
         camera.configure(camera_mode_enum)
 
         version = camera.get_version()
@@ -863,8 +895,11 @@ def main() -> bool:
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
     parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
     parser.add_argument("--holoviz", action="store_true", help="Run with holoviz (GUI)")
+    parser.add_argument("--raw", action="store_true", help="Save raw Bayer frames instead of RGB images")
+    parser.add_argument("--test-frame", action="store_true", help="Color bar test frame for validation (overrides camera input)")
+    parser.add_argument("--lane-num", type=int, default=4, help="Number of MIPI lanes to configure (default: 4)")
+    parser.add_argument("--lane-rate", type=int, default=371, help="MIPI lane rate in Mbps (default: 371)")
 
-    
     args = parser.parse_args()
     
     # If listing modes, do that and exit
@@ -899,7 +934,11 @@ def main() -> bool:
         log_level=args.log_level,
         save_images=args.save_images,
         save_dir=args.save_dir,
-        max_saves=args.max_saves
+        max_saves=args.max_saves,
+        raw=args.raw,
+        test_frame=args.test_frame,
+        lane_num=args.lane_num,
+        lane_rate=args.lane_rate
     )
     results.append(("Camera Functionality", cam_success, cam_message, cam_stats))
     

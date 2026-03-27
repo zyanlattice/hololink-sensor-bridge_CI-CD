@@ -120,6 +120,22 @@ class MetricRegistry:
             ("latency_ms_p99", "ms", MetricScope.TEST, "99th percentile latency"),
             ("throughput_fps", "fps", MetricScope.TEST, "Frames per second"),
             ("crc_pass_rate", "percent", MetricScope.TEST, "CRC validation pass rate"),
+            # PTP timing metrics
+            ("mean_frame_acquisition_ms", "ms", MetricScope.TEST, "Mean PTP frame acquisition time"),
+            ("min_frame_acquisition_ms", "ms", MetricScope.TEST, "Min PTP frame acquisition time"),
+            ("max_frame_acquisition_ms", "ms", MetricScope.TEST, "Max PTP frame acquisition time"),
+            ("p95_frame_acquisition_ms", "ms", MetricScope.TEST, "95th percentile PTP frame acquisition time"),
+            ("p99_frame_acquisition_ms", "ms", MetricScope.TEST, "99th percentile PTP frame acquisition time"),
+            ("stdev_frame_acquisition_us", "µs", MetricScope.TEST, "Std dev PTP frame acquisition time"),
+            ("mean_frame_interval_ms", "ms", MetricScope.TEST, "Mean PTP inter-frame interval"),
+            ("stdev_frame_interval_ms", "ms", MetricScope.TEST, "Std dev PTP inter-frame interval"),
+            ("frame_jitter_pct", "percent", MetricScope.TEST, "PTP frame jitter percentage"),
+            ("interval_fail_count", "count", MetricScope.TEST, "PTP frames outside tolerance"),
+            ("expected_interval_ms", "ms", MetricScope.TEST, "Expected PTP frame interval"),
+            ("test_duration_sec", "s", MetricScope.TEST, "PTP test duration"),
+            ("frames_captured", "count", MetricScope.TEST, "Total frames captured"),
+            ("valid_frames", "count", MetricScope.TEST, "Valid frames analyzed"),
+            ("invalid_frames", "count", MetricScope.TEST, "Invalid/rejected frames"),
         ]
         for name, unit, scope, desc in common:
             self.register(name, unit=unit, scope=scope, description=desc)

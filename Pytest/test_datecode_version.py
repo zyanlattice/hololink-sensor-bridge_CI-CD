@@ -6,6 +6,7 @@ Tests FPGA bitstream datecode and version verification.
 import pytest
 
 
+@pytest.mark.quick
 @pytest.mark.hardware
 def test_bitstream_datecode_ver(hololink_device_ip, bitstream_datecode, bitstream_version, record_test_result):
     """Test that FPGA datecode matches expected value."""

@@ -8,6 +8,7 @@ import sys
 from io import StringIO
 
 
+@pytest.mark.quick
 @pytest.mark.hardware
 def test_hololink_enumeration(hololink_device_ip, record_test_result):
     """

@@ -255,7 +255,9 @@ def _measure_hololink_throughput(camera_ip: str = "192.168.0.2", frame_limit: in
         logging.info("Starting Hololink and camera...")
         hololink = hololink_channel.hololink()
         hololink.start()
+        hololink.reset()
         
+        camera.configure_mipi_lane(4, 371)
         camera.configure(camera_mode)
         camera.set_focus(-140)
         camera.set_exposure(0x0600)

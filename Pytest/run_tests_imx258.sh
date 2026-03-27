@@ -2,7 +2,8 @@
 # Comprehensive test runner script for Hololink Sensor Bridge verification tests
 
 set -e  # Exit on error
-
+# Increase stack size to 32 MB to prevent Holoscan RuntimeWarning
+ulimit -s 32768
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,6 +41,7 @@ print_usage() {
     echo "  -h, --help           Show this help message"
     echo "  -m, --markers MARKS  Run tests with specific markers (e.g., 'hardware', 'not slow')"
     echo "  -t, --tests FILES    Run specific test files (space-separated)"
+    echo "  --quick              Run only quick tests (< 1 minute, smoke tests)"
     #echo "  -f, --fast           Skip slow tests"
     #echo "  -s, --software       Run only software tests (no hardware required)"
     #echo "  -hw, --hardware      Run only hardware tests"
@@ -56,6 +58,7 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0                           # Run all tests"
+    echo "  $0 --quick                   # Run only quick tests (fast smoke tests)"
     #echo "  $0 -f                        # Run fast tests only"
     #echo "  $0 -m hardware               # Run hardware tests"
     #echo "  $0 -m 'hardware and not slow' # Hardware tests, skip slow"
@@ -78,6 +81,10 @@ while [[ $# -gt 0 ]]; do
         -t|--tests)
             TEST_FILES="$2"
             shift 2
+            ;;
+        --quick)
+            MARKERS="quick"
+            shift
             ;;
         -vv|--very-verbose)
             VERBOSE="-vv"
@@ -193,13 +200,13 @@ mkdir -p "$TEST_REPORT_DIR"
 
 # Create logs subdirectory with timestamp
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-TEST_LOG_DIR="$TEST_REPORT_DIR/logs_$TIMESTAMP"
+TEST_LOG_DIR="$TEST_REPORT_DIR/logs_imx258_$TIMESTAMP"
 mkdir -p "$TEST_LOG_DIR"
 LOG_FILE="$TEST_LOG_DIR/pytest_run.log"
 
 # Setup HTML report in the log directory
 if [[ $GENERATE_HTML -eq 1 ]]; then
-    HTML_REPORT="$TEST_LOG_DIR/test_report_$TIMESTAMP.html"
+    HTML_REPORT="$TEST_LOG_DIR/test_report_imx258_$TIMESTAMP.html"
     EXTRA_ARGS="$EXTRA_ARGS --html=$HTML_REPORT --self-contained-html"
 fi
 

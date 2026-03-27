@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
                        help="Host type to connect to (orin or thor)")
     parser.add_argument("--config", type=str, default=None,
                        help="Path to config YAML file (default: config.yaml)")
+    parser.add_argument("--camera-type", type=str, choices=["imx258", "imx274"], default="imx258", help="Camera type for testing (overrides config)")
     
     # Test configuration
     parser.add_argument("--hololink-ip", type=str, default=None,
@@ -95,9 +96,12 @@ def build_docker_command(
     hololink_ip = args.hololink_ip or defaults['hololink_ip']
     device_type = args.device  # Required argument, no fallback needed
     camera_id = args.camera_id if args.camera_id is not None else defaults['camera_id']
+    camera_type = args.camera_type  # Camera type for testing (overrides config)
     
+    test_name = f"./run_tests_{camera_type}.sh"  # e.g., run_tests_imx274.sh
+
     # Build run_tests.sh command with arguments
-    run_tests_cmd = "./run_tests.sh"
+    run_tests_cmd = test_name
     run_tests_cmd += f" --device {device_type}"
     run_tests_cmd += f" --version {args.version}"
     run_tests_cmd += f" --datecode {args.datecode}"
@@ -139,6 +143,7 @@ docker rm -f pytest_runner 2>/dev/null || true
 # Run docker without -it flags (for non-interactive/scripted use)
 # DISPLAY makes GUI appear on Orin's physical monitor
 docker run --rm --net host --gpus all --runtime=nvidia --shm-size=1gb --privileged \\
+  --ulimit stack=33554432 \\
   --name pytest_runner \\
   -v {workspace_root}:{workspace_root} \\
   -v /home/{username}:/home/{username} \\

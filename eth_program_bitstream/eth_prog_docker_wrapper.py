@@ -150,6 +150,7 @@ def build_docker_command(
         "--runtime=nvidia",
         "--shm-size=1gb",
         "--privileged",
+        "--ulimit", "stack=33554432",
         "--name", container_name,
     ])
     

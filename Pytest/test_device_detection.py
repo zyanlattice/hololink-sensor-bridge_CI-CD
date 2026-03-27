@@ -8,6 +8,7 @@ import sys
 from io import StringIO
 
 
+@pytest.mark.quick
 @pytest.mark.hardware
 @pytest.mark.network
 def test_device_detection(hololink_device_ip, record_test_result):

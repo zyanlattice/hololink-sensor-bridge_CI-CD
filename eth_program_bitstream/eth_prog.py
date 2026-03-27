@@ -139,26 +139,29 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
     # Extract board type and code from bitstream filename
     # Pattern: fpga_{board_type}_{4digit_code}_{4digit_version}.bit
     # Examples:
-    #   fpga_bajoran_0000_1234.bit -> board="bajoran", code="00"
+    #   fpga_cpnx_2chip_0001_2511.bit -> board="cpnx_2chip", code="00"
     #   fpga_cpnx_versa_0105_2511.bit -> board="cpnx_versa", code="01"
     filename = os.path.basename(bitstream_path)
     name_without_ext = filename.rsplit('.', 1)[0]
     parts = name_without_ext.split('_')
     
+    # Initialize variables
+    board_type = "unknown"
+    code = ""
+    baj_detect = False
+    
     if len(parts) >= 3 and parts[0] == 'fpga':
-        code_part = parts[-2]  # Second-to-last part (e.g., "0000" or "0105")
+        code_part = parts[-2]  # Second-to-last part (e.g., "0001" or "0105")
         board_type_parts = parts[1:-2]  # Everything between "fpga" and the numeric codes
-        board_type = '_'.join(board_type_parts)  # e.g., "bajoran" or "cpnx_versa"
+        board_type = '_'.join(board_type_parts)  # e.g., "cpnx_2chip" or "cpnx_versa"
         
         # Get first 2 digits of code
         code = code_part[:2] if len(code_part) >= 2 else ""
         
-        # Bajoran board detection: board type is "bajoran" AND code is "00"
-        baj_detect = (board_type == "bajoran" and code == "00")
-    else:
-        baj_detect = False
+        # 2-chip board detection: board type is "cpnx_2chip" AND code is "00"
+        baj_detect = (board_type == "cpnx_2chip" and code == "00")
     
-    print(f"[INFO] Bajoran board detected based on bitstream file: type='{board_type}', code='{code}'")
+    print(f"[INFO] 2-chip board detected based on bitstream file: type='{board_type}', code='{code}'")
 
     #Debug
     #print("FPGA UUID:", fpga_uuid[0])
@@ -181,7 +184,12 @@ def main() -> tuple[bool, bool, bool, bool, bool]:
     if manifest:
         sys.argv.extend(["--manifest", manifest])
     if baj_detect:
-        sys.argv.extend(["--clnx-url", "https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/hsb/fpga_ip/2510/fpga_clnx_v2510_ea.bit"])
+        # Build absolute path to clnx bitstream file
+        clnx_bitstream_path = ci_cd_dir / "bitstream" / "fpga_clnx_v2510.bit"
+        if not clnx_bitstream_path.exists():
+            print(f"[ERROR] CLNX bitstream file not found at: {clnx_bitstream_path}")
+            raise SystemExit(2)
+        sys.argv.extend(["--clnx-file", str(clnx_bitstream_path)])
     tmp, bitstream_ok = generate_manifest_main()
     
     sys.argv = ori_argv

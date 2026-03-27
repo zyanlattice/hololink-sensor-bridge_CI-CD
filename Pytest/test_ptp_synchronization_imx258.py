@@ -37,20 +37,7 @@ def test_ptp_latency_analysis(hololink_device_ip, camera_id, camera_mode, record
             output = captured_output.getvalue()
             print(output, end='')  # Echo to console
         
-        # Check that all latency metrics are present
-        required_metrics = [
-            "mean_frame_acquisition_ms",
-            "mean_cpu_latency_us",
-            "mean_overall_latency_ms"
-        ]
-        
-        for metric in required_metrics:
-            assert metric in metrics, f"Missing metric: {metric}"
-        
-        # Check that latencies are reasonable
-        assert metrics["mean_frame_acquisition_ms"] < 30, "Frame acquisition time too high"
-        assert metrics["mean_overall_latency_ms"] < 50, "Overall latency too high"
-        
+        # Record metrics FIRST (before any assertions) so they're captured even if test fails
         record_test_result({
             "success": success,
             "message": message,
@@ -59,17 +46,20 @@ def test_ptp_latency_analysis(hololink_device_ip, camera_id, camera_mode, record
             "stats": metrics
         })
         
+        # Check that all PTP timing metrics are present
+        required_metrics = [
+            "mean_frame_acquisition_ms",
+            "mean_frame_interval_ms",
+            "frame_jitter_pct"
+        ]
+        
+        for metric in required_metrics:
+            assert metric in metrics, f"Missing metric: {metric}"
+        
+        # Check that frame acquisition time is reasonable (assertions after recording)
+        assert metrics["mean_frame_acquisition_ms"] < 30, f"Frame acquisition time too high: {metrics['mean_frame_acquisition_ms']:.2f}ms"
+        
         assert success, message
-    
-    except Exception as e:
-        record_test_result({
-            "success": False,
-            "message": f"Test runtime error: {str(e)}",
-            "category": "timing",
-            "tags": ["ptp", "latency", "synchronization", "timing", "imx258"],
-            "stats": {}
-        })
-        raise
     
     finally:
         sys.argv = original_argv

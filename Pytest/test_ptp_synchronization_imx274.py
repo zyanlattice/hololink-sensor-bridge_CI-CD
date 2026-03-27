@@ -5,7 +5,14 @@ Tests PTP clock synchronization and latency measurements for IMX274 camera.
 
 import pytest
 import sys
+import os
 from io import StringIO
+
+
+@pytest.fixture(scope="module")
+def camera_mode():
+    """Override camera_mode to default to mode 1 for PTP tests."""
+    return int(os.environ.get("CAMERA_MODE", "1"))
 
 
 @pytest.mark.hardware
@@ -36,11 +43,20 @@ def test_ptp_latency_analysis(hololink_device_ip, camera_id, camera_mode, record
             output = captured_output.getvalue()
             print(output, end='')  # Echo to console
         
-        # Check that all latency metrics are present
+        # Record metrics FIRST (before any assertions) so they're captured even if test fails
+        record_test_result({
+            "success": success,
+            "message": message,
+            "category": "timing",
+            "tags": ["ptp", "latency", "synchronization", "timing", "imx274"],
+            "stats": metrics
+        })
+        
+        # Check that all PTP timing metrics are present
         required_metrics = [
             "mean_frame_acquisition_ms",
-            "mean_cpu_latency_us",
-            "mean_overall_latency_ms"
+            "mean_frame_interval_ms",
+            "frame_jitter_pct"
         ]
         
         for metric in required_metrics:
@@ -51,32 +67,13 @@ def test_ptp_latency_analysis(hololink_device_ip, camera_id, camera_mode, record
             # PTP timestamps not available - skip validation but record as failure
             pytest.skip(f"PTP timestamps not available: {metrics['error']}")
         
-        # Check that latencies are reasonable (only if PTP data is valid)
+        # Check that frame acquisition time is reasonable (only if PTP data is valid)
         if metrics["valid_frames"] > 0:
-            assert metrics["mean_frame_acquisition_ms"] < 30, "Frame acquisition time too high"
-            assert metrics["mean_overall_latency_ms"] < 50, "Overall latency too high"
+            assert metrics["mean_frame_acquisition_ms"] < 30, f"Frame acquisition time too high: {metrics['mean_frame_acquisition_ms']:.2f}ms"
         else:
             pytest.skip("No valid PTP timestamp frames captured")
         
-        record_test_result({
-            "success": success,
-            "message": message,
-            "category": "timing",
-            "tags": ["ptp", "latency", "synchronization", "timing", "imx274"],
-            "stats": metrics
-        })
-        
         assert success, message
-    
-    except Exception as e:
-        record_test_result({
-            "success": False,
-            "message": f"Test runtime error: {str(e)}",
-            "category": "timing",
-            "tags": ["ptp", "latency", "synchronization", "timing", "imx274"],
-            "stats": {}
-        })
-        raise
     
     finally:
         sys.argv = original_argv
