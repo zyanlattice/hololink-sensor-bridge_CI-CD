@@ -4,6 +4,9 @@ Tests IMX258 camera functionality including frame capture and FPS.
 """
 
 import pytest
+import logging
+
+logger = logging.getLogger(__name__)
 
 @pytest.mark.quick
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
@@ -107,11 +110,15 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
     import sys
     import re
     from io import StringIO
+    import time
     
     expected_fps = 30 if camera_mode == 1 else 60
     
     original_argv = sys.argv
     original_stdout = sys.stdout
+    
+    # Record start time to filter files created during this test
+    test_start_time = time.time()
     
     try:
         sys.argv = [
@@ -145,7 +152,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
             if output_text:
                 print(output_text)
         
-        # Build artifacts list for saved images
+        # Build artifacts list for saved images created during THIS test
         artifacts = []
         save_dir = metrics.get("save_dir")
         saved_count = metrics.get("saved_images", 0)
@@ -154,10 +161,13 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
             import os
             from pathlib import Path
             
-            # Find saved PNG files
+            # Find PNG files created during this test run only
             save_path = Path(save_dir)
             if save_path.exists():
-                png_files = sorted(save_path.glob("frame_*.png"))
+                png_files = sorted([
+                    f for f in save_path.glob("frame_*.png")
+                    if f.stat().st_mtime >= test_start_time
+                ])
                 for png_file in png_files:
                     artifacts.append({
                         "type": "png",
@@ -199,7 +209,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
     (1, 371, False),  # 1 lane, default rate - expected fail
     (2, 371, False),  # 2 lanes, default rate - expected fail
 ])
-def test_camera_lane_config_edge_cases(hololink_device_ip, camera_id, camera_mode, lane_num, lane_rate, expected_pass, record_test_result):
+def test_camera_lane_config(hololink_device_ip, camera_id, camera_mode, lane_num, lane_rate, expected_pass, record_test_result):
     """Test IMX258 camera with edge cases for lane number and lane rate configurations."""
     import verify_camera_imx258
     import sys
@@ -278,6 +288,101 @@ def test_camera_lane_config_edge_cases(hololink_device_ip, camera_id, camera_mod
                 pytest.fail(f"Expected PASS but got FAIL: {message}")
             else:
                 pytest.fail(f"Expected FAIL but got PASS: {message}")
+    
+    finally:
+        sys.argv = original_argv
+        sys.stdout = original_stdout
+
+
+@pytest.mark.hardware
+@pytest.mark.camera
+@pytest.mark.slow
+@pytest.mark.parametrize("tp_mode", ["bar", "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "pn9"])
+def test_pattern_validation(hololink_device_ip, camera_mode, tp_mode, record_test_result):
+    """Test IMX258 test pattern validation against golden reference."""
+    import verify_test_pattern_imx258
+    import sys
+    from io import StringIO
+    import time
+    from pathlib import Path
+    import shutil
+    
+    original_argv = sys.argv
+    original_stdout = sys.stdout
+    
+    # Clean tmp_img_folder before test to avoid collecting files from previous runs
+    tmp_folder = Path(verify_test_pattern_imx258.DEFAULT_SAVE_DIR)
+    if tmp_folder.exists():
+        shutil.rmtree(tmp_folder)
+    tmp_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Record start time to filter files created during this test
+    test_start_time = time.time()
+    
+    try:
+        sys.argv = [
+            "verify_test_pattern_imx258.py",
+            "--camera-ip", hololink_device_ip,
+            "--camera-mode", str(camera_mode),
+            "--tp-mode", str(tp_mode),
+        ]
+        
+        # Capture stdout for user visibility
+        captured_output = StringIO()
+        sys.stdout = captured_output
+        
+        try:
+            # verify_test_pattern_imx258.py returns (success, message, metrics)
+            success, message, metrics = verify_test_pattern_imx258.main()
+                
+        except Exception as e:
+            success = False
+            message = f"Test pattern validation failed: {str(e)}"
+            metrics = {"camera_mode": camera_mode, "error": str(e)}
+            
+        finally:
+            sys.stdout = original_stdout
+            output_text = captured_output.getvalue()
+            if output_text:
+                print(output_text)
+        
+        # Build artifacts list for saved images created during THIS test
+        artifacts = []
+        save_dir = metrics.get("save_dir")
+        
+        if save_dir:
+            import os
+            
+            # Find PNG files created after test start time
+            save_path = Path(save_dir)
+            if save_path.exists():
+                # PNG preview files created during this test run only
+                png_files = sorted([
+                    f for f in save_path.glob("frame_*.png")
+                    if f.stat().st_mtime >= test_start_time
+                ])
+                for png_file in png_files:
+                    artifacts.append({
+                        "type": "png",
+                        "path": str(png_file.relative_to(Path.cwd())) if png_file.is_relative_to(Path.cwd()) else str(png_file),
+                        "label": f"Test Pattern {png_file.stem}",
+                        "meta": {"save_dir": str(save_dir)}
+                    })
+        
+        # Remove save_dir from metrics (now in artifact metadata)
+        if "save_dir" in metrics:
+            del metrics["save_dir"]
+        
+        record_test_result({
+            "success": success,
+            "message": message,
+            "category": "test_pattern",
+            "tags": ["camera", "imx258", f"mode_{camera_mode}", "test_pattern", "golden_reference"],
+            "stats": metrics,
+            "artifacts": artifacts
+        })
+        
+        assert success, message
     
     finally:
         sys.argv = original_argv

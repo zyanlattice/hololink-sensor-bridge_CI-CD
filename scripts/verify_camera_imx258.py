@@ -152,13 +152,8 @@ class ImageSaverOp(holoscan.core.Operator):
                 else:
                     img_8bit = host_array.astype(np.uint8)
                 
-                # Handle RGB/RGBA
-                if len(img_8bit.shape) == 3:
-                    if img_8bit.shape[2] == 4:
-                        img_8bit = img_8bit[:, :, :3]  # Drop alpha
-                    img = Image.fromarray(img_8bit, mode='RGB')
-                else:
-                    img = Image.fromarray(img_8bit, mode='L')  # Grayscale
+                # PIL automatically handles RGB/RGBA based on array shape
+                img = Image.fromarray(img_8bit)
                 
                 
                 img.save(png_filename)
@@ -431,7 +426,7 @@ class VerificationApplication(holoscan.core.Application):
                 self,
                 name="rgb_pool",
                 storage_type=1,
-                block_size=self._camera._width * self._camera._height * 6,  # RGB888
+                block_size=self._camera._width * self._camera._height * 8,  # RGBA8888
                 num_blocks=2,
             )
             
@@ -439,7 +434,8 @@ class VerificationApplication(holoscan.core.Application):
                 self,
                 name="bayer_to_rgb",
                 pool=rgb_pool,
-                generate_alpha=False,
+                generate_alpha=True,
+                alpha_value=65535,
                 bayer_grid_pos=bayer_format.value,
                 interpolation_mode=0,
             )
@@ -726,11 +722,7 @@ def verify_camera_functional(
         if test_frame:
             logging.info("Using color bar test frame instead of camera input")
             camera.set_register(0x600,0x0)
-            camera.set_register(0x601,0x03)
-            camera.set_register(0x602,0x03)
-            camera.set_register(0x603,0xFF)
-            camera.set_register(0x606,0x03)
-            camera.set_register(0x607,0xFF)
+            camera.set_register(0x601,0x01)
 
         camera.configure_mipi_lane(lane_num, lane_rate)
         camera.configure(camera_mode_enum)

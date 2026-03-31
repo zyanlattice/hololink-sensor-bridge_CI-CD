@@ -18,9 +18,13 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
     import sys
     import re
     from io import StringIO
+    import time
     
     original_argv = sys.argv
     original_stdout = sys.stdout
+    
+    # Record start time to filter files created during this test
+    test_start_time = time.time()
     
     try:
         sys.argv = [
@@ -51,7 +55,7 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
             if output_text:
                 print(output_text)
         
-        # Build artifacts list if images were saved
+        # Build artifacts list for saved images created during THIS test
         artifacts = []
         save_dir = metrics.get("save_dir")
         saved_count = metrics.get("saved_images", 0)
@@ -60,10 +64,13 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
             import os
             from pathlib import Path
             
-            # Find saved PNG files
+            # Find PNG files created during this test run only
             save_path = Path(save_dir)
             if save_path.exists():
-                png_files = sorted(save_path.glob("frame_*.png"))
+                png_files = sorted([
+                    f for f in save_path.glob("frame_*.png")
+                    if f.stat().st_mtime >= test_start_time
+                ])
                 for png_file in png_files:
                     artifacts.append({
                         "type": "png",
@@ -101,6 +108,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
     import sys
     import re
     from io import StringIO
+    import time
     
     # Use mode 1 (1080p) instead of mode 0 (4K) for image saving
     # to avoid excessive HolovizOp rendering overhead
@@ -109,6 +117,9 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
     
     original_argv = sys.argv
     original_stdout = sys.stdout
+    
+    # Record start time to filter files created during this test
+    test_start_time = time.time()
     
     try:
         sys.argv = [
@@ -142,7 +153,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
             if output_text:
                 print(output_text)
         
-        # Build artifacts list for saved images
+        # Build artifacts list for saved images created during THIS test
         artifacts = []
         save_dir = metrics.get("save_dir")
         saved_count = metrics.get("saved_images", 0)
@@ -151,10 +162,13 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
             import os
             from pathlib import Path
             
-            # Find saved PNG files
+            # Find PNG files created during this test run only
             save_path = Path(save_dir)
             if save_path.exists():
-                png_files = sorted(save_path.glob("frame_*.png"))
+                png_files = sorted([
+                    f for f in save_path.glob("frame_*.png")
+                    if f.stat().st_mtime >= test_start_time
+                ])
                 for png_file in png_files:
                     artifacts.append({
                         "type": "png",
@@ -165,6 +179,8 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
             
             # Validate that images were actually saved
             if saved_count == 0 or len(png_files) == 0:
+                success = False
+                message = f"Camera Mode {camera_mode} with image saving FAILED: No images saved"
                 success = False
                 message = f"Camera Mode {camera_mode} with image saving FAILED: No images saved"
         
