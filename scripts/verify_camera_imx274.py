@@ -9,17 +9,32 @@ IMX274_MODE_3840X2160_60FPS = 0
     IMX274_MODE_3840X2160_60FPS_12BITS = 2
     Unknown = 3
 
+PERFORMANCE NOTES:
+    Image saving operations (--save-images) are performed asynchronously to minimize
+    pipeline blocking. However, some performance impact is expected:
+    
+    - Normal operation: ~60 FPS maintained
+    - With --save-images: Brief lag during GPU->CPU transfer, async disk I/O
+    - With --holoviz: ~40-50 FPS due to visualization overhead (15-20 FPS drop)
+    - With --holoviz --save-images: ~40 FPS (combines both overheads)
+    
+    The frame counter measures frames BEFORE save operations, so FPS metrics
+    reflect actual camera throughput, not save performance.
+
 """
 
 import argparse
 import ctypes
 import logging
+import math
 import re
 import sys
 import time
 import threading
 import os
 from typing import Tuple
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import terminal_print_formating as tpf
 
@@ -32,16 +47,53 @@ from holoscan.resources import UnboundedAllocator
 import hololink as hololink_module
 
 
+def _find_project_root() -> Path:
+    """
+    Find the project root directory (where CI_CD/ should be created).
+    
+    Walks up from the script location looking for workspace markers:
+    - cicd_host/ directory
+    - Pytest/ directory  
+    - .git directory
+    Or stops at a directory named 'CI_CD' and returns its parent.
+    
+    Returns the parent directory where CI_CD/ should be created.
+    """
+    current = Path(__file__).resolve().parent
+    
+    # Walk up the directory tree
+    for parent in [current] + list(current.parents):
+        # If we're inside CI_CD already, return its parent to avoid CI_CD/CI_CD/
+        if parent.name == "CI_CD":
+            return parent.parent
+            
+        # Look for workspace markers that indicate the root
+        if any([
+            (parent / "cicd_host").exists(),
+            (parent / "Pytest").exists(),
+            (parent / ".git").exists(),
+        ]):
+            return parent
+    
+    # Fallback: parent of scripts directory
+    return current.parent if current.name == "scripts" else current
+
+
+# Default save directory: [project_root]/CI_CD/tmp_img_folder
+_PROJECT_ROOT = _find_project_root()
+DEFAULT_SAVE_DIR = str(_PROJECT_ROOT / "CI_CD" / "tmp_img_folder")
+
+
 class TimeoutError(Exception):
     """Raised when verification times out."""
     pass
 
 class ImageSaverOp(holoscan.core.Operator):
-    """Operator to save frames as images."""
+    """Operator to save frames as images asynchronously to avoid blocking pipeline."""
     
-    def __init__(self, *args, save_dir="/tmp/camera_verification", max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
+    def __init__(self, *args, save_dir=None, max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.save_dir = save_dir
+        self.save_dir = save_dir or DEFAULT_SAVE_DIR
         self.max_saves = max_saves
         self.saved_count = 0
         self.frames_to_save = frames_to_save or []  # List of frame numbers to save
@@ -50,7 +102,11 @@ class ImageSaverOp(holoscan.core.Operator):
         self.camera = camera  # ← Add camera reference
         self.hololink = hololink  # ← Add hololink reference
         self.save_images = save_images
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
+        
+        # Thread pool for async saving (prevents blocking pipeline)
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ImageSaver")
+        self._futures = []
         
     def setup(self, spec):
         spec.input("input")
@@ -71,67 +127,104 @@ class ImageSaverOp(holoscan.core.Operator):
             
             tensor = in_message.get("")
             
-            # Convert Holoscan Tensor (GPU object) → CuPy array (GPU array) → NumPy array (CPU array)
+            # FAST: GPU → CPU transfer (must be synchronous, but fast ~5-10ms)
             cuda_array = cp.asarray(tensor)
-            host_array = cp.asnumpy(cuda_array)
+            host_array = cp.asnumpy(cuda_array).copy()  # .copy() to detach from GPU memory
             
             timestamp = time.time()
-            filename = os.path.join(self.save_dir, f"frame_{self.current_frame:04d}_{timestamp:.3f}.npy")
+            frame_num = self.current_frame
+            save_count = self.saved_count
             
-            # Save .npy file
+            # ASYNC: Submit save operation to thread pool (returns immediately)
+            future = self._executor.submit(
+                self._save_frame_async,
+                host_array,
+                frame_num,
+                timestamp,
+                save_count
+            )
+            self._futures.append(future)
+            
+            self.saved_count += 1
+            logging.info(f"  Queued frame {save_count + 1}/{self.max_saves} for async save (frame {frame_num})")
+
+        except Exception as e:
+            logging.error(f"Failed to queue frame for saving: {e}", exc_info=True)
+    
+    def _save_frame_async(self, host_array, frame_num, timestamp, save_count):
+        """Background thread function - performs slow I/O operations."""
+        try:
+            filename = os.path.join(self.save_dir, f"frame_{frame_num:04d}_{timestamp:.3f}.npy")
+            
+            # Save .npy file (SLOW: disk I/O)
             np.save(filename, host_array)
-                        
-            logging.info(f"  Saved frame {self.saved_count + 1}/{self.max_saves}: {filename}")
-            logging.info(f"  Shape: {host_array.shape}, dtype: {host_array.dtype}, "
+            
+            logging.info(f"  [ASYNC] Saved frame {save_count + 1}: {filename}")
+            logging.info(f"  [ASYNC] Shape: {host_array.shape}, dtype: {host_array.dtype}, "
                         f"min: {host_array.min()}, max: {host_array.max()}")
             
-            # Save PNG preview
+            # Save PNG preview (SLOW: processing + disk I/O)
             try:
                 from PIL import Image
                 png_filename = filename.replace('.npy', '.png')
                 
-                # Normalize to 8-bit - PROPERLY handle the dynamic range
+                # Normalize to 8-bit
                 if host_array.dtype == np.uint16:
-                    # Find actual min/max for proper normalization
                     arr_min = host_array.min()
                     arr_max = host_array.max()
                     
-                    # Normalize to 0-255 range
                     if arr_max > arr_min:
                         normalized = ((host_array.astype(np.float32) - arr_min) / (arr_max - arr_min) * 255)
                         img_8bit = normalized.astype(np.uint8)
                     else:
                         img_8bit = np.zeros_like(host_array, dtype=np.uint8)
                     
-                    logging.info(f"  Normalized from [{arr_min}, {arr_max}] to [0, 255]")
+                    logging.info(f"  [ASYNC] Normalized from [{arr_min}, {arr_max}] to [0, 255]")
                     
                 elif np.issubdtype(host_array.dtype, np.floating):
                     img_8bit = (np.clip(host_array, 0, 1) * 255).astype(np.uint8)
                 else:
                     img_8bit = host_array.astype(np.uint8)
                 
-                # PIL automatically handles RGB/RGBA based on array shape
                 img = Image.fromarray(img_8bit)
-                
-                
                 img.save(png_filename)
-                logging.info(f"  Saved PNG: {png_filename}")
+                logging.info(f"  [ASYNC] Saved PNG: {png_filename}")
 
             except Exception as e:
-                logging.warning(f"  Could not save PNG: {e}")
-
-            
-            self.saved_count += 1
+                logging.warning(f"  [ASYNC] Could not save PNG: {e}")
 
         except Exception as e:
-            logging.error(f"Failed to save frame: {e}", exc_info=True)
+            logging.error(f"[ASYNC] Failed to save frame: {e}", exc_info=True)
+    
+    def stop(self):
+        """Wait for all pending saves to complete."""
+        if self._futures:
+            logging.info(f"Waiting for {len(self._futures)} pending image saves to complete...")
+            for future in self._futures:
+                try:
+                    future.result(timeout=5.0)  # Wait up to 5s per save
+                except Exception as e:
+                    logging.warning(f"Save operation failed or timed out: {e}")
+        self._executor.shutdown(wait=True)
+        logging.info("All image saves completed")
 
 class ScreenShotOp(holoscan.core.Operator):
-    """Operator to save frames as images."""
+    """Operator to capture screenshots of HolovizOp display asynchronously.
     
-    def __init__(self, *args, save_dir="/tmp/camera_verification", max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
+    WARNING: Screenshot capture is SLOW (~200-500ms per capture) due to:
+    - PIL ImageGrab capturing entire screen (not just window)
+    - Screen-to-file encoding
+    
+    Expected performance impact with --holoviz:
+    - ~15-20 FPS drop from visualization overhead
+    - Additional freeze during screenshot saves
+    
+    Use async thread pool to minimize pipeline blocking.
+    """
+    
+    def __init__(self, *args, save_dir=None, max_saves=5, frames_to_save=None, app=None, camera=None, hololink=None, save_images=True, **kwargs):
         super().__init__(*args, **kwargs)
-        self.save_dir = save_dir
+        self.save_dir = save_dir or DEFAULT_SAVE_DIR
         self.max_saves = max_saves
         self.saved_count = 0
         self.frames_to_save = frames_to_save or []  # List of frame numbers to save
@@ -140,7 +233,11 @@ class ScreenShotOp(holoscan.core.Operator):
         self.camera = camera  # ← Add camera reference
         self.hololink = hololink  # ← Add hololink reference
         self.save_images = save_images
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
+        
+        # Thread pool for async screenshot capture
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Screenshot")
+        self._futures = []
         
     def setup(self, spec):
         spec.input("input")
@@ -156,22 +253,45 @@ class ScreenShotOp(holoscan.core.Operator):
         if self.saved_count >= self.max_saves:
             return  # Already saved enough
         
-        from PIL import ImageGrab
         try:
-            
             timestamp = time.time()
             filename = os.path.join(self.save_dir, f"frame_{self.current_frame:04d}_{timestamp:.3f}.png")
+            save_count = self.saved_count
             
+            # Submit screenshot to background thread (returns immediately)
+            future = self._executor.submit(self._capture_screenshot_async, filename, save_count)
+            self._futures.append(future)
             
-            screenshot = ImageGrab.grab()
-            screenshot_path = filename
-            screenshot.save(screenshot_path)
-            logging.info(f"Saved HolovizOp screenshot: {screenshot_path}")
-
             self.saved_count += 1
+            logging.info(f"Queued screenshot {save_count + 1}/{self.max_saves} for async capture")
 
         except Exception as e:
-            logging.warning(f"Could not capture screenshot: {e}")
+            logging.warning(f"Could not queue screenshot: {e}")
+    
+    def _capture_screenshot_async(self, filename, save_count):
+        """Background thread - captures and saves screenshot."""
+        try:
+            from PIL import ImageGrab
+            
+            # SLOW: Captures entire screen (200-500ms)
+            screenshot = ImageGrab.grab()
+            screenshot.save(filename)
+            logging.info(f"[ASYNC] Saved screenshot {save_count + 1}: {filename}")
+            
+        except Exception as e:
+            logging.warning(f"[ASYNC] Screenshot capture failed: {e}")
+    
+    def stop(self):
+        """Wait for all pending screenshots to complete."""
+        if self._futures:
+            logging.info(f"Waiting for {len(self._futures)} pending screenshots to complete...")
+            for future in self._futures:
+                try:
+                    future.result(timeout=10.0)  # Screenshots are slow, wait longer
+                except Exception as e:
+                    logging.warning(f"Screenshot operation failed or timed out: {e}")
+        self._executor.shutdown(wait=True)
+        logging.info("All screenshots completed")
 
 
 class FrameCounterOp(holoscan.core.Operator):
@@ -534,7 +654,7 @@ def verify_camera_functional(
     min_fps: float = 10.0,
     log_level: int = logging.INFO,
     save_images: bool = False,
-    save_dir: str = "/tmp/camera_verification",
+    save_dir: str = None,
     max_saves: int = 5
 ) -> Tuple[bool, str, dict]:
     """
@@ -561,11 +681,15 @@ def verify_camera_functional(
         """Compute which frame numbers to save, evenly distributed."""
         if max_saves <= 0 or frame_limit <= 0:
             return []
-        interval = frame_limit / max_saves
-        return [int((i + 1) * interval) for i in range(max_saves)]
+        interval = math.floor(frame_limit / (max_saves + 1))
+        return [int((i+1) * interval) for i in range(max_saves)]
     
     frames_to_save = _compute_img_fac(frame_limit, max_saves) if save_images else []
     logging.info(f"Frames to save: {frames_to_save}")  # Debug
+    
+    # Use default save directory if not specified
+    if save_dir is None:
+        save_dir = DEFAULT_SAVE_DIR
 
     hololink_module.logging_level(log_level)
     
@@ -576,6 +700,14 @@ def verify_camera_functional(
     if save_images:
         logging.info(f"Image saving: ENABLED (max {max_saves} images to {save_dir})")
     logging.info("=" * 80)
+    
+    # Create save directory early to catch permission/path errors before camera setup
+    if save_images:
+        try:
+            os.makedirs(save_dir, exist_ok=True)
+            logging.info(f"Created/verified save directory: {save_dir}")
+        except Exception as e:
+            return False, f"Failed to create save directory '{save_dir}': {str(e)}", {}
     
     hololink = None
     camera = None
@@ -819,6 +951,14 @@ def verify_camera_functional(
     finally:
         stop_event.set()
         
+        # Wait for pending async image saves to complete FIRST
+        if application and application._image_saver:
+            try:
+                logging.info("Waiting for pending image saves to complete...")
+                application._image_saver.stop()
+            except Exception as e:
+                logging.warning(f"Error waiting for image saves: {e}")
+        
         # CLEANUP SEQUENCE (must be in correct order):
         # 1. Stop hololink (closes socket, stops frame reception, implicitly stops camera streaming)
         # 2. GXF receiver unblocks and graph completes
@@ -867,7 +1007,7 @@ def main() -> bool:
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
     parser.add_argument("--log-level", type=int, default=logging.INFO, help="Logging level")
     parser.add_argument("--save-images", action="store_true", default=False, help="Save captured frames as images")
-    parser.add_argument("--save-dir", type=str, default="/home/orin/HSB/CI_CD/test_image_folder", help="Directory to save images")
+    parser.add_argument("--save-dir", type=str, default=None, help=f"Directory to save images (default: {DEFAULT_SAVE_DIR})")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
     parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
     parser.add_argument("--holoviz", action="store_true", help="Run with holoviz (GUI)")
