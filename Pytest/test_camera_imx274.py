@@ -282,7 +282,7 @@ def test_camera_stereo_save_img(hololink_device_ip, camera_id, record_test_resul
             if save_path.exists():
                 # Collect left camera frames
                 left_files = sorted([
-                    f for f in save_path.glob("frame_*_left_*.png")
+                    f for f in save_path.glob("left_frame_*.png")
                     if f.stat().st_mtime >= test_start_time
                 ])
                 for png_file in left_files:
@@ -295,7 +295,7 @@ def test_camera_stereo_save_img(hololink_device_ip, camera_id, record_test_resul
                 
                 # Collect right camera frames
                 right_files = sorted([
-                    f for f in save_path.glob("frame_*_right_*.png")
+                    f for f in save_path.glob("right_frame_*.png")
                     if f.stat().st_mtime >= test_start_time
                 ])
                 for png_file in right_files:
