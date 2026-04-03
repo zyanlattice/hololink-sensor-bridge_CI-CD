@@ -288,138 +288,6 @@ class ScreenShotOp(holoscan.core.Operator):
         logging.info("All screenshots completed")
 
 
-class StereoImageSaverOp(holoscan.core.Operator):
-    """Operator to save combined stereo images (side-by-side) asynchronously.
-    
-    Combines left and right camera images into a single side-by-side image,
-    matching the visualization display layout.
-    """
-    
-    def __init__(self, *args, save_dir=None, max_saves=5, frames_to_save=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.save_dir = save_dir or DEFAULT_SAVE_DIR
-        self.max_saves = max_saves
-        self.saved_count = 0
-        self.frames_to_save = frames_to_save or []  # List of frame numbers to save
-        self.current_frame = 0  # Track which frame we're on
-        os.makedirs(self.save_dir, exist_ok=True)
-        
-        # Cache for left/right frames (to synchronize them)
-        self.left_frame = None
-        self.right_frame = None
-        
-        # Thread pool for async saving
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="StereoSaver")
-        self._futures = []
-        
-    def setup(self, spec):
-        spec.input("left")
-        spec.input("right")
-        
-    def compute(self, op_input, op_output, context):
-        # Receive both inputs
-        left_message = op_input.receive("left")
-        right_message = op_input.receive("right")
-        
-        self.current_frame += 1
-        
-        # Check if this frame should be saved
-        if self.current_frame not in self.frames_to_save:
-            return  # Don't save this frame
-        
-        if self.saved_count >= self.max_saves:
-            return  # Already saved enough
-        
-        try:
-            import cupy as cp
-            
-            # Get left and right tensors
-            left_tensor = left_message.get("left")
-            right_tensor = right_message.get("right")
-            
-            # FAST: GPU → CPU transfer (synchronous but fast)
-            left_cuda = cp.asarray(left_tensor)
-            right_cuda = cp.asarray(right_tensor)
-            
-            left_array = cp.asnumpy(left_cuda).copy()
-            right_array = cp.asnumpy(right_cuda).copy()
-            
-            timestamp = time.time()
-            frame_num = self.current_frame
-            save_count = self.saved_count
-            
-            # ASYNC: Submit combined save operation
-            future = self._executor.submit(
-                self._save_stereo_frame_async,
-                left_array,
-                right_array,
-                frame_num,
-                timestamp,
-                save_count
-            )
-            self._futures.append(future)
-            
-            self.saved_count += 1
-            logging.info(f"  [STEREO] Queued frame {save_count + 1}/{self.max_saves} for async save (frame {frame_num})")
-
-        except Exception as e:
-            logging.error(f"[STEREO] Failed to queue frame for saving: {e}", exc_info=True)
-    
-    def _save_stereo_frame_async(self, left_array, right_array, frame_num, timestamp, save_count):
-        """Background thread - combines and saves stereo image."""
-        try:
-            # Normalize both images to 8-bit for display
-            def normalize_to_8bit(array):
-                if array.dtype == np.uint16:
-                    arr_min = array.min()
-                    arr_max = array.max()
-                    if arr_max > arr_min:
-                        normalized = ((array.astype(np.float32) - arr_min) / (arr_max - arr_min) * 255)
-                        return normalized.astype(np.uint8)
-                    else:
-                        return np.zeros_like(array, dtype=np.uint8)
-                elif np.issubdtype(array.dtype, np.floating):
-                    return (np.clip(array, 0, 1) * 255).astype(np.uint8)
-                else:
-                    return array.astype(np.uint8)
-            
-            left_8bit = normalize_to_8bit(left_array)
-            right_8bit = normalize_to_8bit(right_array)
-            
-            # Remove alpha channel if present (RGBA -> RGB)
-            if left_8bit.shape[-1] == 4:
-                left_8bit = left_8bit[..., :3]
-            if right_8bit.shape[-1] == 4:
-                right_8bit = right_8bit[..., :3]
-            
-            # Combine side-by-side: [left | right]
-            combined = np.concatenate([left_8bit, right_8bit], axis=1)
-            
-            # Save combined image
-            from PIL import Image
-            filename = os.path.join(self.save_dir, f"stereo_combined_{frame_num:04d}_{timestamp:.3f}.png")
-            img = Image.fromarray(combined)
-            img.save(filename)
-            
-            logging.info(f"  [STEREO][ASYNC] Saved combined frame {save_count + 1}: {filename}")
-            logging.info(f"  [STEREO][ASYNC] Left shape: {left_array.shape}, Right shape: {right_array.shape}, Combined: {combined.shape}")
-
-        except Exception as e:
-            logging.error(f"[STEREO][ASYNC] Failed to save combined frame: {e}", exc_info=True)
-    
-    def stop(self):
-        """Wait for all pending saves to complete."""
-        if self._futures:
-            logging.info(f"[STEREO] Waiting for {len(self._futures)} pending image saves to complete...")
-            for future in self._futures:
-                try:
-                    future.result(timeout=5.0)
-                except Exception as e:
-                    logging.warning(f"[STEREO] Save operation failed or timed out: {e}")
-        self._executor.shutdown(wait=True)
-        logging.info("[STEREO] All combined image saves completed")
-
-
 class FrameCounterOp(holoscan.core.Operator):
     """Operator to count received frames and track timestamps."""
     
@@ -546,7 +414,6 @@ class StereoVerificationApplication(holoscan.core.Application):
         self._frame_counter_right = None
         self._image_saver_left = None
         self._image_saver_right = None
-        self._stereo_image_saver = None
         self._screenshot_saver = None  # Saves screenshots when using holoviz
 
     def compose(self):
@@ -784,16 +651,6 @@ class StereoVerificationApplication(holoscan.core.Application):
                 frames_to_save=self._frames_to_save,
                 camera_name="right",
             )
-            
-            # COMBINED STEREO IMAGE SAVER (side-by-side)
-            if self._save_combined:
-                self._stereo_image_saver = StereoImageSaverOp(
-                    self,
-                    name="stereo_image_saver",
-                    save_dir=self._save_dir,
-                    max_saves=self._max_saves,
-                    frames_to_save=self._frames_to_save,
-                )
 
         # CONNECT LEFT PIPELINE
         self.add_flow(
@@ -824,11 +681,6 @@ class StereoVerificationApplication(holoscan.core.Application):
         # If saving images, also branch to image saver
         if self._save_images:
             self.add_flow(demosaic_right, self._image_saver_right, {("transmitter", "input")})
-            
-            # Connect combined stereo image saver (receives both left and right)
-            if self._save_combined:
-                self.add_flow(demosaic_left, self._stereo_image_saver, {("transmitter", "left")})
-                self.add_flow(demosaic_right, self._stereo_image_saver, {("transmitter", "right")})
             
             # Connect screenshot saver (captures fullscreen holoviz display)
             if self._screenshot_saver:
@@ -869,10 +721,6 @@ class StereoVerificationApplication(holoscan.core.Application):
         """Get the number of images saved from right camera."""
         return self._image_saver_right.saved_count if self._image_saver_right else 0
     
-    def get_saved_count_stereo(self) -> int:
-        """Get the number of combined stereo images saved."""
-        return self._stereo_image_saver.saved_count if self._stereo_image_saver else 0
-    
     def get_saved_count_screenshot(self) -> int:
         """Get the number of holoviz screenshots saved."""
         return self._screenshot_saver.saved_count if self._screenshot_saver else 0
@@ -898,7 +746,7 @@ def verify_stereo_camera_functional(
     save_images: bool = False,
     save_dir: str = None,
     max_saves: int = 5,
-    save_combined: bool = True,  # Save combined side-by-side stereo images
+    save_combined: bool = True,  # Save fullscreen screenshots with --holoviz
 ) -> Tuple[bool, str, dict]:
     """
     Verify STEREO IMX274 camera functionality.
@@ -913,10 +761,10 @@ def verify_stereo_camera_functional(
         log_level: Logging level
         window_height: Window height for visualization
         window_width: Window width for visualization
-        save_images: Whether to save captured frames as images
+        save_images: Whether to save captured frames as images (per camera)
         save_dir: Directory to save images
         max_saves: Maximum number of images to save per camera
-        save_combined: Whether to save combined side-by-side stereo images (and fullscreen screenshots with --holoviz)
+        save_combined: Whether to save fullscreen screenshots with --holoviz (stereo_screenshot_*.png)
         
     Returns:
         Tuple of (success: bool, message: str, stats: dict)
@@ -1154,9 +1002,6 @@ def verify_stereo_camera_functional(
             saved_count_right = application.get_saved_count_right()
             stats["saved_images_left"] = saved_count_left
             stats["saved_images_right"] = saved_count_right
-            if save_combined:
-                saved_count_stereo = application.get_saved_count_stereo()
-                stats["saved_images_stereo"] = saved_count_stereo
             # Add screenshot count if using holoviz
             if holoviz:
                 saved_count_screenshot = application.get_saved_count_screenshot()
@@ -1222,13 +1067,6 @@ def verify_stereo_camera_functional(
             except Exception as e:
                 logging.warning(f"Error waiting for right camera image saves: {e}")
         
-        if application and application._stereo_image_saver:
-            try:
-                logging.info("Waiting for pending stereo combined image saves to complete...")
-                application._stereo_image_saver.stop()
-            except Exception as e:
-                logging.warning(f"Error waiting for stereo combined image saves: {e}")
-        
         if application and application._screenshot_saver:
             try:
                 logging.info("Waiting for pending screenshot saves to complete...")
@@ -1279,8 +1117,8 @@ def main() -> bool:
     parser.add_argument("--save-images", action="store_true", default=False, help="Save captured frames as images")
     parser.add_argument("--save-dir", type=str, default=None, help=f"Directory to save images (default: {DEFAULT_SAVE_DIR})")
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save per camera")
-    parser.add_argument("--save-combined", action="store_true", default=True, help="Save combined side-by-side stereo images (default: True)")
-    parser.add_argument("--no-save-combined", dest="save_combined", action="store_false", help="Don't save combined stereo images")
+    parser.add_argument("--save-combined", action="store_true", default=True, help="Save fullscreen screenshots with --holoviz (default: True)")
+    parser.add_argument("--no-save-combined", dest="save_combined", action="store_false", help="Don't save fullscreen screenshots")
     
     args = parser.parse_args()
     
