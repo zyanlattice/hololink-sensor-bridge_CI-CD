@@ -655,7 +655,9 @@ def verify_camera_functional(
     log_level: int = logging.INFO,
     save_images: bool = False,
     save_dir: str = None,
-    max_saves: int = 5
+    max_saves: int = 5,
+    test_frame: bool = False,
+    tp_mode: str = "vbar"
 ) -> Tuple[bool, str, dict]:
     """
     Verify IMX274 camera functionality after bitstream programming.
@@ -672,6 +674,8 @@ def verify_camera_functional(
         save_images: Whether to save captured frames as images
         save_dir: Directory to save images
         max_saves: Maximum number of images to save
+        test_frame: Enable test pattern mode (uses pattern ID 10 - shaded color bar)
+        tp_mode: Test pattern mode ("hbar" for horizontal bars, "vbar" for vertical bars)
     Returns:
         Tuple of (success: bool, message: str, stats: dict)
     """
@@ -693,10 +697,17 @@ def verify_camera_functional(
 
     hololink_module.logging_level(log_level)
     
+    if tp_mode == "vbar":
+        test_pattern_id = 10  # Shaded vertical bars
+    elif tp_mode == "hbar":
+        test_pattern_id = 11  # Shaded horizontal bars
+
     logging.info("=" * 80)
     logging.info(f"Starting IMX274 Camera Functional Verification")
     logging.info(f"Camera IP: {camera_ip}, Camera: IMX274, Camera ID: {camera_id}, Mode: {camera_mode}")
     logging.info(f"Frame limit: {frame_limit}, Timeout: {timeout_seconds}s")
+    if test_frame:
+        logging.info(f"Test pattern mode: ENABLED (pattern ID {test_pattern_id} - {'shaded horizontal bars' if tp_mode == 'hbar' else 'shaded vertical bars'})")
     if save_images:
         logging.info(f"Image saving: ENABLED (max {max_saves} images to {save_dir})")
     logging.info("=" * 80)
@@ -744,7 +755,10 @@ def verify_camera_functional(
         
         # Initialize IMX274 camera (expander_configuration defaults to 0)
         hololink_channel = hololink_module.DataChannel(channel_metadata)
-        camera = hololink_module.sensors.imx274.dual_imx274.Imx274Cam(hololink_channel, expander_configuration=0)
+        if camera_ip == "192.168.0.2":
+            camera = hololink_module.sensors.imx274.dual_imx274.Imx274Cam(hololink_channel, expander_configuration=0)
+        else:
+            camera = hololink_module.sensors.imx274.dual_imx274.Imx274Cam(hololink_channel, expander_configuration=1)   
         camera_mode_enum = hololink_module.sensors.imx274.imx274_mode.Imx274_Mode(camera_mode)
         
         headless = not holoviz
@@ -778,6 +792,11 @@ def verify_camera_functional(
         camera.setup_clock()
         camera.configure(camera_mode_enum)
         camera.set_digital_gain_reg(0x4)  # Set digital gain (from linux_imx274_player.py)
+
+        # Enable test pattern if requested (for golden image capture)
+        if test_frame:
+            logging.info(f"Enabling test pattern (ID {test_pattern_id} - {'shaded horizontal bars' if tp_mode == 'hbar' else 'shaded vertical bars'})")
+            camera.test_pattern(test_pattern_id)
 
         version = camera.get_version()
         logging.info(f"Camera version: {version}")
@@ -1011,7 +1030,8 @@ def main() -> bool:
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save")
     parser.add_argument("--list-mode", action="store_true", help="List available camera modes and exit")
     parser.add_argument("--holoviz", action="store_true", help="Run with holoviz (GUI)")
-
+    parser.add_argument("--test-frame", action="store_true", help="Enable test pattern mode (pattern ID 10 - shaded color bar) for golden image capture")
+    parser.add_argument("--tp-mode", choices=["hbar","vbar"], default="vbar", help="Test pattern mode: horizontal bars (hbar) or vertical bars (vbar)")
     
     args = parser.parse_args()
     
@@ -1047,7 +1067,9 @@ def main() -> bool:
         log_level=args.log_level,
         save_images=args.save_images,
         save_dir=args.save_dir,
-        max_saves=args.max_saves
+        max_saves=args.max_saves,
+        test_frame=args.test_frame,
+        tp_mode=args.tp_mode
     )
     results.append(("Camera Functionality", cam_success, cam_message, cam_stats))
     

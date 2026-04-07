@@ -41,6 +41,7 @@ print_usage() {
     echo ""
     echo "Options:"
     echo "  -h, --help           Show this help message"
+    echo "  --ip IP_ADDRESS       Set Hololink device IP address (default: 192.168.0.2)"
     echo "  -m, --markers MARKS  Run tests with specific markers (e.g., 'hardware', 'not slow')"
     echo "  -t, --tests FILES    Run specific test files (space-separated)"
     echo "  --quick              Run only quick tests (< 1 minute, smoke tests)"

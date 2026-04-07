@@ -443,7 +443,7 @@ class StereoVerificationApplication(holoscan.core.Application):
             )
             condition_right = self._ok_right
         
-        # Set mode for BOTH cameras
+        # Set SAME mode for BOTH cameras (shared clock requirement)
         self._camera_left.set_mode(self._camera_mode)
         self._camera_right.set_mode(self._camera_mode)
 
@@ -478,7 +478,7 @@ class StereoVerificationApplication(holoscan.core.Application):
         )
         self._camera_right.configure_converter(csi_to_bayer_operator_right)
 
-        # Frame size should be same for both cameras
+        # Frame size should be same for both cameras (same mode)
         frame_size = csi_to_bayer_operator_left.get_csi_length()
         assert frame_size == csi_to_bayer_operator_right.get_csi_length()
 
@@ -747,6 +747,9 @@ def verify_stereo_camera_functional(
     save_dir: str = None,
     max_saves: int = 5,
     save_combined: bool = True,  # Save fullscreen screenshots with --holoviz
+    test_frame: bool = True,
+    tp_mode_left: str = "vbar",
+    tp_mode_right: str = "vbar"
 ) -> Tuple[bool, str, dict]:
     """
     Verify STEREO IMX274 camera functionality.
@@ -754,7 +757,7 @@ def verify_stereo_camera_functional(
     Args:
         holoviz: Whether to run with holoviz (GUI)
         camera_ip: IP address of the Hololink device
-        camera_mode: Camera mode (see Imx274_Mode enum)
+        camera_mode: Camera mode for both cameras (see Imx274_Mode enum)
         frame_limit: Number of frames to capture per camera
         timeout_seconds: Maximum time to wait for frames
         min_fps: Minimum acceptable FPS per camera
@@ -765,7 +768,10 @@ def verify_stereo_camera_functional(
         save_dir: Directory to save images
         max_saves: Maximum number of images to save per camera
         save_combined: Whether to save fullscreen screenshots with --holoviz (stereo_screenshot_*.png)
-        
+        test_frame: Enable test pattern mode (uses pattern ID 10 - shaded color bar)
+        tp_mode_left: Test pattern mode for left camera ("hbar" for horizontal bars, "vbar" for vertical bars)
+        tp_mode_right: Test pattern mode for right camera ("hbar" for horizontal bars, "vbar" for vertical bars)
+
     Returns:
         Tuple of (success: bool, message: str, stats: dict)
     """
@@ -785,12 +791,24 @@ def verify_stereo_camera_functional(
     if save_dir is None:
         save_dir = DEFAULT_SAVE_DIR
     
+    if tp_mode_left == "vbar":
+        test_pattern_id_left = 10  # Shaded vertical bars
+    elif tp_mode_left == "hbar":
+        test_pattern_id_left = 11  # Shaded horizontal bars
+
+    if tp_mode_right == "vbar":
+        test_pattern_id_right = 10  # Shaded vertical bars
+    elif tp_mode_right == "hbar":
+        test_pattern_id_right = 11  # Shaded horizontal bars
+
     hololink_module.logging_level(log_level)
     
     logging.info("=" * 80)
     logging.info(f"Starting STEREO IMX274 Camera Functional Verification")
     logging.info(f"Camera IP: {camera_ip}, Camera: STEREO IMX274, Mode: {camera_mode}")
     logging.info(f"Frame limit: {frame_limit} per camera, Timeout: {timeout_seconds}s")
+    if test_frame:
+        logging.info(f"Test pattern mode: ENABLED (left pattern ID {test_pattern_id_left} - {'shaded horizontal bars' if tp_mode_left == 'hbar' else 'shaded vertical bars'}, right pattern ID {test_pattern_id_right} - {'shaded horizontal bars' if tp_mode_right == 'hbar' else 'shaded vertical bars'})")
     if save_images:
         logging.info(f"Image saving: ENABLED (max {max_saves} images per camera to {save_dir})")
     logging.info("=" * 80)
@@ -894,7 +912,7 @@ def verify_stereo_camera_functional(
         hololink.start()
         hololink.reset()
         
-        # Configure BOTH cameras
+        # Configure BOTH cameras (same mode - shared clock requirement)
         logging.info("Configuring cameras...")
         camera_left.setup_clock()  # This also sets camera_right's clock (shared)
         camera_left.configure(camera_mode_enum)
@@ -906,6 +924,12 @@ def verify_stereo_camera_functional(
         version_left = camera_left.get_version()
         version_right = camera_right.get_version()
         logging.info(f"Camera versions - Left: {version_left}, Right: {version_right}")
+
+         # Enable test pattern if requested (for golden image capture)
+        if test_frame:
+            logging.info(f"Enabling test pattern (left pattern ID {test_pattern_id_left} - {'shaded horizontal bars' if tp_mode_left == 'hbar' else 'shaded vertical bars'}, right pattern ID {test_pattern_id_right} - {'shaded horizontal bars' if tp_mode_right == 'hbar' else 'shaded vertical bars'})")
+            camera_left.test_pattern(test_pattern_id_left)
+            camera_right.test_pattern(test_pattern_id_right)
 
         # Run verification
         logging.info(f"Capturing {frame_limit} frames from each camera...")
@@ -1105,7 +1129,7 @@ def verify_stereo_camera_functional(
 def main() -> bool:
     parser = argparse.ArgumentParser(description="Verify STEREO IMX274 camera functionality")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
-    parser.add_argument("--camera-mode", type=int, default=1, help="Camera mode (1=1080p recommended)")
+    parser.add_argument("--camera-mode", type=int, default=1, help="Camera mode for both cameras (1=1080p recommended)")
     parser.add_argument("--frame-limit", type=int, default=300, help="Frames per camera")
     parser.add_argument("--timeout", type=int, default=15, help="Timeout in seconds")
     parser.add_argument("--min-fps", type=float, default=30.0, help="Minimum acceptable FPS")
@@ -1119,6 +1143,9 @@ def main() -> bool:
     parser.add_argument("--max-saves", type=int, default=1, help="Maximum number of images to save per camera")
     parser.add_argument("--save-combined", action="store_true", default=True, help="Save fullscreen screenshots with --holoviz (default: True)")
     parser.add_argument("--no-save-combined", dest="save_combined", action="store_false", help="Don't save fullscreen screenshots")
+    parser.add_argument("--test-frame", action="store_true", help="Enable test pattern mode (pattern ID 10 - shaded color bar) for golden image capture")
+    parser.add_argument("--tp-mode-left", choices=["hbar","vbar"], default="vbar", help="Test pattern mode for left camera: horizontal bars (hbar) or vertical bars (vbar)")
+    parser.add_argument("--tp-mode-right", choices=["hbar","vbar"], default="vbar", help="Test pattern mode for right camera: horizontal bars (hbar) or vertical bars (vbar)")
     
     args = parser.parse_args()
     
@@ -1149,6 +1176,9 @@ def main() -> bool:
         save_dir=args.save_dir,
         max_saves=args.max_saves,
         save_combined=args.save_combined,
+        test_frame=args.test_frame,
+        tp_mode_left=args.tp_mode_left,
+        tp_mode_right=args.tp_mode_right,
     )
     
     # Print summary
