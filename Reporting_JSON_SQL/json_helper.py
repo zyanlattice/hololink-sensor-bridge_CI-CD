@@ -200,6 +200,7 @@ class TimeseriesData:
 class TestEntry:
     """A single test result"""
     name: str
+    test_id: str  # Required: Custom test identifier for traceability (e.g., "TC_7.1")
     status: str  # "pass", "fail", "skip", "partial"
     duration_ms: float
     metrics: Dict[str, Any] = field(default_factory=dict)
@@ -238,6 +239,7 @@ class RunReport:
     def add_test(
         self,
         name: str,
+        test_id: str,
         status: str,
         duration_ms: float,
         metrics: Optional[Dict[str, Any]] = None,
@@ -252,6 +254,7 @@ class RunReport:
         """
         test = TestEntry(
             name=name,
+            test_id=test_id,
             status=status,
             duration_ms=duration_ms,
             metrics=metrics or {},

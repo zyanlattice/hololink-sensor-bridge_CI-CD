@@ -998,9 +998,28 @@ def verify_camera_functional(
             # This matches test_imx274_stereo_single_interface architecture
             
             logging.info(f"Searching for Hololink device at {camera_ip}...")
-            channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
+            
+            # Retry logic to handle "Interrupted system call" errors when tests run back-to-back
+            max_retries = 3
+            retry_delay = 0.5  # Start with 500ms
+            channel_metadata = None
+            
+            for attempt in range(max_retries):
+                try:
+                    channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
+                    if channel_metadata:
+                        break
+                    logging.warning(f"Device not found at {camera_ip}, attempt {attempt + 1}/{max_retries}")
+                except RuntimeError as e:
+                    if "Interrupted system call" in str(e) and attempt < max_retries - 1:
+                        logging.warning(f"Interrupted system call on attempt {attempt + 1}/{max_retries}, retrying after {retry_delay}s delay...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        raise
+            
             if not channel_metadata:
-                return False, f"Failed to find Hololink device at {camera_ip}", {}
+                return False, f"Failed to find Hololink device at {camera_ip} after {max_retries} attempts", {}
             
             logging.info("Hololink device found, configuring for dual sensors...")
             
@@ -1069,9 +1088,28 @@ def verify_camera_functional(
             # Access only sensor 0 on the specified IP address
             
             logging.info(f"Searching for camera at {camera_ip}...")
-            channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
+            
+            # Retry logic to handle "Interrupted system call" errors when tests run back-to-back
+            max_retries = 3
+            retry_delay = 0.5  # Start with 500ms
+            channel_metadata = None
+            
+            for attempt in range(max_retries):
+                try:
+                    channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
+                    if channel_metadata:
+                        break
+                    logging.warning(f"Camera not found at {camera_ip}, attempt {attempt + 1}/{max_retries}")
+                except RuntimeError as e:
+                    if "Interrupted system call" in str(e) and attempt < max_retries - 1:
+                        logging.warning(f"Interrupted system call on attempt {attempt + 1}/{max_retries}, retrying after {retry_delay}s delay...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        raise
+            
             if not channel_metadata:
-                return False, f"Failed to find camera at {camera_ip}", {}
+                return False, f"Failed to find camera at {camera_ip} after {max_retries} attempts", {}
             
             logging.info("Camera found")
             

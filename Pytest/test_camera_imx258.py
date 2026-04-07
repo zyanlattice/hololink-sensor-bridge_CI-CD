@@ -8,6 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+@pytest.mark.test_id("TC_2.6-2.7")
 @pytest.mark.quick
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
@@ -100,6 +101,7 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_4.1")
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.camera
@@ -199,6 +201,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_2.8")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.parametrize("lane_num,lane_rate,expected_pass", [
@@ -294,6 +297,7 @@ def test_camera_lane_config(hololink_device_ip, camera_id, camera_mode, lane_num
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_5.1,5.3-5.10")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow

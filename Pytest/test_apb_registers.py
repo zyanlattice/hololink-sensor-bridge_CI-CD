@@ -5,7 +5,7 @@ Tests APB bus register read/write operations.
 
 import pytest
 
-
+@pytest.mark.test_id("TC_7.1")
 @pytest.mark.quick
 @pytest.mark.hardware
 def test_apb_current_device(hololink_device_ip, device_type, host_interface, record_test_result):

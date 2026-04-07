@@ -1,5 +1,6 @@
 from holoscan.core import Application
 import sys
+import time
 
 import hololink as hololink_module
 
@@ -22,7 +23,28 @@ def main(timeout_seconds: int = 10) -> tuple[bool, str, dict]:
             if sn and sn not in devices:
                 devices[sn] = m
             return True
-        hololink_module.Enumerator().enumerated(on_meta, hololink_module.Timeout(timeout_seconds))
+        
+        # Retry logic to handle "Interrupted system call" errors when tests run back-to-back
+        max_retries = 3
+        retry_delay = 0.5  # Start with 500ms
+        enumeration_success = False
+        
+        for attempt in range(max_retries):
+            try:
+                hololink_module.Enumerator().enumerated(on_meta, hololink_module.Timeout(timeout_seconds))
+                enumeration_success = True
+                break
+            except RuntimeError as e:
+                if "Interrupted system call" in str(e) and attempt < max_retries - 1:
+                    print(f"⚠ Interrupted system call on attempt {attempt + 1}/{max_retries}, retrying after {retry_delay}s delay...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise
+        
+        if not enumeration_success:
+            print(f"✗ Device enumeration failed after {max_retries} attempts")
+            return False, f"Enumeration failed after {max_retries} attempts", metrics
         
         # Populate metrics
         metrics["devices_found"] = len(devices)

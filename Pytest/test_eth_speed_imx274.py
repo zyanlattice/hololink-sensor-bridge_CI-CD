@@ -6,6 +6,7 @@ Tests ethernet link speed and throughput with IMX274 camera.
 import pytest
 
 
+@pytest.mark.test_id("TC_1.1")
 @pytest.mark.hardware
 @pytest.mark.network
 @pytest.mark.slow

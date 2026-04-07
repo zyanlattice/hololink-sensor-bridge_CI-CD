@@ -5,6 +5,7 @@ Tests IMX274 camera functionality including frame capture and FPS.
 
 import pytest
 
+@pytest.mark.test_id("TC_2.6-2.7")
 @pytest.mark.quick
 @pytest.mark.hardware
 @pytest.mark.camera
@@ -99,6 +100,7 @@ def test_camera_modes(hololink_device_ip, camera_id, camera_mode, expected_fps, 
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_4.2")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
@@ -205,6 +207,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, record_test_result, save
 
 
 
+@pytest.mark.test_id("TC_4.3")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
@@ -346,6 +349,7 @@ def test_camera_stereo_save_img(hololink_device_ip, camera_id, record_test_resul
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_5.1-5.2")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow
@@ -449,6 +453,7 @@ def test_pattern_validation(hololink_device_ip, camera_mode, tp_mode, record_tes
         sys.stdout = original_stdout
 
 
+@pytest.mark.test_id("TC_5.1-5.2")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow

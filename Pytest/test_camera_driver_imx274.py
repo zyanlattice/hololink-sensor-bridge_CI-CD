@@ -6,6 +6,7 @@ Tests IMX274 camera driver detection and initialization.
 import pytest
 
 
+@pytest.mark.test_id("TC_2.1")
 @pytest.mark.hardware
 @pytest.mark.camera
 def test_camera_driver_detection(hololink_device_ip, record_test_result):

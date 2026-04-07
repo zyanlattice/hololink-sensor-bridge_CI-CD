@@ -117,6 +117,7 @@ def run_sample_app(
         return False, "", f"Exception: {str(e)}"
 
 
+@pytest.mark.test_id("TC_2.2")
 @pytest.mark.hardware
 def test_imx258_player(hololink_device_ip, camera_id, record_test_result):
     """
@@ -200,6 +201,7 @@ def test_imx258_player(hololink_device_ip, camera_id, record_test_result):
 # Template for future sample app tests
 # Uncomment and modify as needed:
 
+@pytest.mark.test_id("TC_2.5")
 @pytest.mark.hardware
 def test_tao_peoplenet(hololink_device_ip, camera_id, record_test_result):
     """
@@ -259,6 +261,7 @@ def test_tao_peoplenet(hololink_device_ip, camera_id, record_test_result):
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.4")
 @pytest.mark.hardware
 def test_body_pose(hololink_device_ip, camera_id, record_test_result):
     """
@@ -317,6 +320,7 @@ def test_body_pose(hololink_device_ip, camera_id, record_test_result):
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.3")
 @pytest.mark.hardware  
 def test_latency_measurement(hololink_device_ip, camera_id, record_test_result):
     """

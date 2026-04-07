@@ -6,6 +6,7 @@ Tests ethernet link speed and throughput.
 import pytest
 
 
+@pytest.mark.test_id("TC_1.1")
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.network

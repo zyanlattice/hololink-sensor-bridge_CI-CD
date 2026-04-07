@@ -8,6 +8,7 @@ import sys
 from io import StringIO
 
 
+@pytest.mark.test_id("TC_1.2")
 @pytest.mark.xfail(reason="MIPI CSI2 soft IP not fully optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.camera

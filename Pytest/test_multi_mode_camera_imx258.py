@@ -7,6 +7,7 @@ import pytest
 import sys
 from io import StringIO
 
+@pytest.mark.test_id("TC_2.6")
 @pytest.mark.xfail(reason="IMX258 camera config not optimized", strict=True)
 @pytest.mark.hardware
 @pytest.mark.camera

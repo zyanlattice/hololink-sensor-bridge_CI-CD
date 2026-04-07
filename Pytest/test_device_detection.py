@@ -8,6 +8,7 @@ import sys
 from io import StringIO
 
 
+@pytest.mark.test_id("TC_3.2")
 @pytest.mark.quick
 @pytest.mark.hardware
 @pytest.mark.network

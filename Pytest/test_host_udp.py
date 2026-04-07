@@ -8,6 +8,7 @@ import sys
 from io import StringIO
 
 
+@pytest.mark.test_id("TC_4.4")
 @pytest.mark.network
 def test_udp_loopback(record_test_result):
     """Test UDP loopback on localhost."""

@@ -15,6 +15,7 @@ def camera_mode():
     return int(os.environ.get("CAMERA_MODE", "1"))
 
 
+@pytest.mark.test_id("TC_1.2")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow

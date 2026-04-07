@@ -7,6 +7,7 @@ import pytest
 import sys
 from io import StringIO
 
+@pytest.mark.test_id("TC_2.6")
 @pytest.mark.hardware
 @pytest.mark.camera
 @pytest.mark.slow

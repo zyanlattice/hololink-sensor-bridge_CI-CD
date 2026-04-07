@@ -436,16 +436,30 @@ def record_test_result(test_results_file, request):
             # Extract artifacts if provided
             artifacts = result.get("artifacts", [])
             
+            # Extract test_id from marker - REQUIRED for all tests
+            test_id_marker = request.node.get_closest_marker('test_id')
+            if not test_id_marker or len(test_id_marker.args) == 0:
+                # Fallback: generate test_id from test location if marker is missing
+                test_id = f"{test_file}::{test_name}"
+                print(f"[WARNING] Test {test_name} missing @pytest.mark.test_id() marker, using fallback: {test_id}")
+            else:
+                test_id = test_id_marker.args[0]
+                # Validate test_id is not empty string
+                if not test_id or test_id.strip() == "":
+                    test_id = f"{test_file}::{test_name}"
+                    print(f"[WARNING] Test {test_name} has empty test_id marker, using fallback: {test_id}")
+            
             # Add test to structured report
             run_report.add_test(
                 name=test_name,
+                test_id=test_id,
                 status=status,
                 duration_ms=result.get("duration_ms", 0.0),
                 metrics=metrics,
                 error_message=message if status == "fail" else None,
                 artifacts=artifacts,
                 category=category,
-                tags=tags
+                tags=tags,
             )
             
             print(f"[DEBUG] TestEntry created successfully with {len(artifacts)} artifacts")
@@ -527,15 +541,29 @@ def pytest_runtest_makereport(item, call):
             elif "latency" in test_file.lower() or "performance" in test_file.lower():
                 category = "performance"
             
+            # Extract test_id from marker - REQUIRED for all tests
+            test_id_marker = item.get_closest_marker('test_id')
+            if not test_id_marker or len(test_id_marker.args) == 0:
+                # Fallback: generate test_id from test location if marker is missing
+                test_id = f"{test_file}::{test_name}"
+                print(f"[WARNING] Test {test_name} missing @pytest.mark.test_id() marker, using fallback: {test_id}")
+            else:
+                test_id = test_id_marker.args[0]
+                # Validate test_id is not empty string
+                if not test_id or test_id.strip() == "":
+                    test_id = f"{test_file}::{test_name}"
+                    print(f"[WARNING] Test {test_name} has empty test_id marker, using fallback: {test_id}")
+            
             # Add test to structured report
             run_report.add_test(
                 name=test_name,
+                test_id=test_id,
                 status=status,
                 duration_ms=report.duration * 1000,
                 metrics={},
                 error_message=str(report.longrepr) if report.failed else None,
                 category=category,
-                tags=[]
+                tags=[],
             )
                 
         except Exception as e:

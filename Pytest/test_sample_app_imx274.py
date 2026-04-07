@@ -117,6 +117,7 @@ def run_sample_app(
         return False, "", f"Exception: {str(e)}"
 
 
+@pytest.mark.test_id("TC_2.2")
 @pytest.mark.hardware
 def test_imx274_player(hololink_device_ip, camera_id, record_test_result):
     """
@@ -181,6 +182,7 @@ def test_imx274_player(hololink_device_ip, camera_id, record_test_result):
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.5")
 @pytest.mark.hardware
 def test_tao_peoplenet_imx274(hololink_device_ip, camera_id, record_test_result):
     """
@@ -239,6 +241,7 @@ def test_tao_peoplenet_imx274(hololink_device_ip, camera_id, record_test_result)
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.4")
 @pytest.mark.hardware
 def test_body_pose_imx274(hololink_device_ip, camera_id, record_test_result):
     """
@@ -296,6 +299,7 @@ def test_body_pose_imx274(hololink_device_ip, camera_id, record_test_result):
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.3")
 @pytest.mark.hardware  
 def test_latency_measurement_imx274(hololink_device_ip, camera_id, record_test_result):
     """
@@ -357,6 +361,7 @@ def test_latency_measurement_imx274(hololink_device_ip, camera_id, record_test_r
     assert success and all_checks_passed, message
 
 
+@pytest.mark.test_id("TC_2.9")
 @pytest.mark.hardware  
 def test_stereo_imx274(hololink_device_ip, camera_id, record_test_result):
     """
