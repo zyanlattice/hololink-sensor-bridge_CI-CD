@@ -664,7 +664,8 @@ def verify_camera_functional(
     raw: bool = False,
     test_frame: bool = False,
     lane_num: int = 4,
-    lane_rate: int = 371
+    lane_rate: int = 371,
+    tp_mode: str = "bar",
 ) -> Tuple[bool, str, dict]:
     """
     Verify IMX258 camera functionality after bitstream programming.
@@ -685,6 +686,7 @@ def verify_camera_functional(
         test_frame: Whether to use a color bar test frame for validation (overrides camera input)
         lane_num: Number of MIPI lanes to configure
         lane_rate: MIPI lane rate in Mbps
+        tp_mode: Test pattern mode to use (overrides camera input)
     Returns:
         Tuple of (success: bool, message: str, stats: dict)
     """
@@ -808,9 +810,99 @@ def verify_camera_functional(
         application._hololink = hololink  # ← Set hololink reference
         
         if test_frame:
-            logging.info("Using color bar test frame instead of camera input")
-            camera.set_register(0x600,0x0)
-            camera.set_register(0x601,0x01)
+            if tp_mode == "bar":
+                logging.info("Configuring camera for color bar test pattern")
+                camera.set_register(0x600, 0x0)  # Enable test pattern
+                camera.set_register(0x601, 0x03)  # Set to color bar pattern
+            elif tp_mode == "pn9":
+                logging.info("Configuring camera for PN9 test pattern")
+                camera.set_register(0x600, 0x0)  # Enable test pattern
+                camera.set_register(0x601, 0x04)  # Set to PN9 pattern
+            elif tp_mode == "red":
+                logging.info("Configuring camera for red solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x03)  # Red
+                camera.set_register(0x603, 0xFF)
+                camera.set_register(0x604, 0x00)  # Green-Red
+                camera.set_register(0x605, 0x00)
+                camera.set_register(0x606, 0x00)  # Blue
+                camera.set_register(0x607, 0x00)
+                camera.set_register(0x608, 0x00)  # Green-Blue
+                camera.set_register(0x609, 0x00)
+            elif tp_mode == "orange":
+                logging.info("Configuring camera for orange solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x03)  # Red
+                camera.set_register(0x603, 0xFF)
+                camera.set_register(0x604, 0x00)  # Green-Red
+                camera.set_register(0x605, 0x00)
+                camera.set_register(0x606, 0x00)  # Blue
+                camera.set_register(0x607, 0x00)
+                camera.set_register(0x608, 0x03)  # Green-Blue
+                camera.set_register(0x609, 0xFF)
+            elif tp_mode == "yellow":
+                logging.info("Configuring camera for yellow solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x03)  # Red
+                camera.set_register(0x603, 0xFF)
+                camera.set_register(0x604, 0x03)  # Green-Red
+                camera.set_register(0x605, 0xFF)
+                camera.set_register(0x606, 0x00)  # Blue
+                camera.set_register(0x607, 0x00)
+                camera.set_register(0x608, 0x03)  # Green-Blue
+                camera.set_register(0x609, 0xFF)
+            elif tp_mode == "green":
+                logging.info("Configuring camera for green solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x00)  # Red
+                camera.set_register(0x603, 0x00)
+                camera.set_register(0x604, 0x03)  # Green-Red
+                camera.set_register(0x605, 0xFF)
+                camera.set_register(0x606, 0x00)  # Blue
+                camera.set_register(0x607, 0x00)
+                camera.set_register(0x608, 0x03)  # Green-Blue
+                camera.set_register(0x609, 0xFF)
+            elif tp_mode == "cyan":
+                logging.info("Configuring camera for cyan solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x00)  # Red
+                camera.set_register(0x603, 0x00)
+                camera.set_register(0x604, 0x03)  # Green-Red
+                camera.set_register(0x605, 0xFF)
+                camera.set_register(0x606, 0x03)  # Blue
+                camera.set_register(0x607, 0xFF)
+                camera.set_register(0x608, 0x03)  # Green-Blue
+                camera.set_register(0x609, 0xFF)
+            elif tp_mode == "blue":
+                logging.info("Configuring camera for blue solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x00)  # Red
+                camera.set_register(0x603, 0x00)
+                camera.set_register(0x604, 0x00)  # Green-Red
+                camera.set_register(0x605, 0x00)
+                camera.set_register(0x606, 0x03)  # Blue
+                camera.set_register(0x607, 0xFF)
+                camera.set_register(0x608, 0x00)  # Green-Blue
+                camera.set_register(0x609, 0x00)
+            elif tp_mode == "magenta":
+                logging.info("Configuring camera for magenta solid color test pattern")
+                camera.set_register(0x600, 0x0)  # Normal operation
+                camera.set_register(0x601, 0x01)  # Solid color mode
+                camera.set_register(0x602, 0x03)  # Red
+                camera.set_register(0x603, 0xFF)
+                camera.set_register(0x604, 0x00)  # Green-Red
+                camera.set_register(0x605, 0x00)
+                camera.set_register(0x606, 0x03)  # Blue
+                camera.set_register(0x607, 0xFF)
+                camera.set_register(0x608, 0x00)  # Green-Blue
+                camera.set_register(0x609, 0x00)
+            
 
         camera.configure_mipi_lane(lane_num, lane_rate)
         camera.configure(camera_mode_enum)
@@ -821,14 +913,7 @@ def verify_camera_functional(
         # Set focus
         camera.set_focus(-300)
 
-        # Increase brightness: boost exposure and gain
-        # Exposure: 0x0600 (1536 lines, up from default 0x0438=1080)
-        # Analog gain: 0x0180 (384 = 1.5x gain = 3.5dB, up from default 0x0100=256)
-        # 
-        # Brightness adjustment guide:
-        # - Too dark: Increase exposure (0x0700, 0x0800) or gain (0x0200=2x, 0x0300=3x)
-        # - Too bright: Decrease exposure (0x0400, 0x0300) or gain (0x0080=0.5x)
-        # - Prefer exposure over gain for better image quality (less noise)
+        
         camera.set_exposure(0x0600)
         camera.set_analog_gain(0x0180)
         logging.info("Applied exposure=0x0600 and analog_gain=0x0180 for better brightness")
@@ -1049,6 +1134,7 @@ def main() -> bool:
     parser.add_argument("--test-frame", action="store_true", help="Color bar test frame for validation (overrides camera input)")
     parser.add_argument("--lane-num", type=int, default=4, help="Number of MIPI lanes to configure (default: 4)")
     parser.add_argument("--lane-rate", type=int, default=371, help="MIPI lane rate in Mbps (default: 371)")
+    parser.add_argument("--tp-mode", choices=["bar", "red", "orange", "yellow", "green", "blue", "cyan", "magenta", "pn9"], help="Test pattern mode to use (overrides camera input)")
 
     args = parser.parse_args()
     
@@ -1088,7 +1174,8 @@ def main() -> bool:
         raw=args.raw,
         test_frame=args.test_frame,
         lane_num=args.lane_num,
-        lane_rate=args.lane_rate
+        lane_rate=args.lane_rate,
+        tp_mode=args.tp_mode
     )
     results.append(("Camera Functionality", cam_success, cam_message, cam_stats))
     
@@ -1126,3 +1213,125 @@ if __name__ == "__main__":
     else:
         print(f"[FAIL] {message}")
         sys.exit(1)
+
+"""
+red
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x03)
+camera_0.set_register(0x603,0xFF)
+# Green-Red
+camera_0.set_register(0x604,0x00)
+camera_0.set_register(0x605,0x00)
+# Blue
+camera_0.set_register(0x606,0x00)
+camera_0.set_register(0x607,0x00)
+# Green-Blue
+camera_0.set_register(0x608,0x00)
+camera_0.set_register(0x609,0x00)
+    
+orange (pixelated)
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x03)
+camera_0.set_register(0x603,0xFF)
+# Green-Red
+camera_0.set_register(0x604,0x00)
+camera_0.set_register(0x605,0x00)
+# Blue
+camera_0.set_register(0x606,0x00)
+camera_0.set_register(0x607,0x00)
+# Green-Blue
+camera_0.set_register(0x608,0x03)
+camera_0.set_register(0x609,0xFF)
+
+yellow
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x03)
+camera_0.set_register(0x603,0xFF)
+# Green-Red
+camera_0.set_register(0x604,0x03)
+camera_0.set_register(0x605,0xFF)
+# Blue
+camera_0.set_register(0x606,0x00)
+camera_0.set_register(0x607,0x00)
+# Green-Blue
+camera_0.set_register(0x608,0x03)
+camera_0.set_register(0x609,0xFF)
+    
+green
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x00)
+camera_0.set_register(0x603,0x00)
+# Green-Red
+camera_0.set_register(0x604,0x03)
+camera_0.set_register(0x605,0xFF)
+# Blue
+camera_0.set_register(0x606,0x00)
+camera_0.set_register(0x607,0x00)
+# Green-Blue
+camera_0.set_register(0x608,0x03)
+camera_0.set_register(0x609,0xFF)
+    
+Cyan
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x00)
+camera_0.set_register(0x603,0x00)
+# Green-Red
+camera_0.set_register(0x604,0x03)
+camera_0.set_register(0x605,0xFF)
+# Blue
+camera_0.set_register(0x606,0x03)
+camera_0.set_register(0x607,0xFF)
+# Green-Blue
+camera_0.set_register(0x608,0x03)
+camera_0.set_register(0x609,0xFF)
+    
+Blue
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x00)
+camera_0.set_register(0x603,0x00)
+# Green-Red
+camera_0.set_register(0x604,0x00)
+camera_0.set_register(0x605,0x00)
+# Blue
+camera_0.set_register(0x606,0x03)
+camera_0.set_register(0x607,0xFF)
+# Green-Blue
+camera_0.set_register(0x608,0x00)
+camera_0.set_register(0x609,0x00)
+    
+Magenta
+# 0x00-Ori, 0x01-SolidColor, 0x02-ColorBar, 0x03-ShadedColorBar
+camera_0.set_register(0x600,0x0)
+camera_0.set_register(0x601,0x01) 
+# Red
+camera_0.set_register(0x602,0x03)
+camera_0.set_register(0x603,0xFF)
+# Green-Red
+camera_0.set_register(0x604,0x00)
+camera_0.set_register(0x605,0x00)
+# Blue
+camera_0.set_register(0x606,0x03)
+camera_0.set_register(0x607,0xFF)
+# Green-Blue
+camera_0.set_register(0x608,0x00)
+camera_0.set_register(0x609,0x00)
+    
+"""
