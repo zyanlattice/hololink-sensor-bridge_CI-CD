@@ -13,13 +13,13 @@ read 0x1000_0000 expected return 0x3
 read 0x1000_7A00 expected return 0x80
 read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
 read 0x2000_7A00 expected return 0x80 (only when HOST_IF = 2)
-
-CPNX 10G
-read 0x1000_7A00 expected return 0x80
-read 0x2000_0000 expected return 0x3
-read 0x3000_7A00 expected return 0x80 (only when HOST_IF = 2)
-read 0x4000_0000 expected return 0x3 (only when HOST_IF = 2)
  
+CPNX 2.5G
+read 0x1000_0000 expected return 0x3
+read 0x1000_7A00 expected return 0x80
+read 0x2000_0000 expected return 0x3 (only when HOST_IF = 2)
+read 0x2000_7A00 expected return 0x80 (only when HOST_IF = 2)
+
 CPNX 1G
 read 0x1000_0000 expected return 0xD
  
@@ -37,6 +37,7 @@ def argument_parser()-> argparse.Namespace:
     parser = argparse.ArgumentParser(description="APB Bus Checker for Hololink Device")
     parser.add_argument("--peer-ip", type=str, default="192.168.0.2", help="Hololink device IP")  
     parser.add_argument("--cpnx1", action="store_true", help="CPNX Versa 1G device")
+    parser.add_argument("--cpnx2_5", action="store_true", help="CPNX Versa 2.5G device")
     parser.add_argument("--cpnx10", action="store_true", help="CPNX Versa 10G device")
     parser.add_argument("--avant10", action="store_true", help="Avant Versa 10G device")
     parser.add_argument("--avant25", action="store_true", help="Avant Versa 25G device")
@@ -51,6 +52,7 @@ def main():
     peer_ip = args.peer_ip
     regaddr = args.regaddr
     cpnx1 = args.cpnx1
+    cpnx2_5 = args.cpnx2_5
     cpnx10 = args.cpnx10
     avant10 = args.avant10
     avant25 = args.avant25
@@ -58,9 +60,9 @@ def main():
     
     # If --regaddr is specified, device type is optional (for manual address testing)
     if not regaddr:
-        if ((args.cpnx1 is False) and (args.cpnx10 is False) and (args.avant10 is False) and (args.avant25 is False)):
+        if ((args.cpnx1 is False) and (args.cpnx2_5 is False) and (args.cpnx10 is False) and (args.avant10 is False) and (args.avant25 is False)):
             print("Exception thrown: At least one device type must be specified.\n" \
-            "Use --cpnx1, --cpnx10, --avant10, or --avant25 to specify the device type.")
+            "Use --cpnx1, --cpnx2_5, --cpnx10, --avant10, or --avant25 to specify the device type.")
             raise SystemExit(2)
     
     # Metrics to track
@@ -180,14 +182,14 @@ def main():
 
 
         # CPNX 10G APB bus check
-        if cpnx10:
+        if cpnx10 or cpnx2_5:
             addr_val1 = {
                 0x10007A00: 0x80,
-                0x20000000: 0x3  
+                0x10000000: 0x3  
                 }
             addr_val2 = {
-                0x30007A00: 0x80,
-                0x40000000: 0x3     # CPNX 10G HOST_IF = 2
+                0x20007A00: 0x80,
+                0x20000000: 0x3     # CPNX 10G HOST_IF = 2
                 }  
             if hostif == 1:
                 addr_val = addr_val1
