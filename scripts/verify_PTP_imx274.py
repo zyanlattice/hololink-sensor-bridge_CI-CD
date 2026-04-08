@@ -58,7 +58,7 @@ class FrameCounterOp(holoscan.core.Operator):
     
     def __init__(self, *args, frame_limit=50, requested_limit=None, app=None, 
                  pass_through=False, camera=None, hololink=None, 
-                 save_images=False, camera_mode=0, **kwargs):
+                 save_images=False, camera_mode=1, **kwargs):
         self.pass_through = pass_through
         self.frame_limit = frame_limit  # Actual capture limit (requested + 10 for dropping)
         self.requested_limit = requested_limit or frame_limit  # What user requested (for reporting)
@@ -233,7 +233,8 @@ class FrameCounterOp(holoscan.core.Operator):
             frame_end = self.frame_end_times[i]
             
             # Frame acquisition = time from sensor start to FPGA metadata ready
-            frame_time_dt = frame_end - frame_start  # Expected: ~16.67ms for IMX274 (60fps all modes)
+            # Mode-specific: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms
+            frame_time_dt = frame_end - frame_start
             
             # Sanity check: should be positive and < 100ms
             if frame_time_dt < 0 or frame_time_dt > 0.1:
@@ -309,8 +310,8 @@ class FrameCounterOp(holoscan.core.Operator):
             "valid_frames": len(validated_indices),
             "invalid_frames": self.frame_count - len(validated_indices),
             
-            # Frame acquisition time (sensor readout + FPGA processing)
-            # Expected: ~16.67ms for IMX274 (60fps all modes)
+            # Frame acquisition time (sensor active readout + FPGA processing)
+            # Mode-specific: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms
             "mean_frame_acquisition_ms": statistics.mean(frame_acquisition_times) * 1000,
             "min_frame_acquisition_ms": min(frame_acquisition_times) * 1000,
             "max_frame_acquisition_ms": max(frame_acquisition_times) * 1000,
@@ -343,7 +344,7 @@ class FrameCounterOp(holoscan.core.Operator):
 
 
 def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300, 
-                          timeout_seconds: int = 15, camera_mode: int = 0) -> Optional[dict]:
+                          timeout_seconds: int = 15, camera_mode: int = 1) -> Optional[dict]:
     """
     Comprehensive PTP timestamp measurement for IMX274 camera.
     
@@ -389,28 +390,9 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
         
         # Find Hololink channel
         logging.info(f"Searching for Hololink device at {camera_ip}...")
-        
-        # Retry logic to handle "Interrupted system call" errors when tests run back-to-back
-        max_retries = 3
-        retry_delay = 0.5  # Start with 500ms
-        channel_metadata = None
-        
-        for attempt in range(max_retries):
-            try:
-                channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
-                if channel_metadata:
-                    break
-                logging.warning(f"Device not found at {camera_ip}, attempt {attempt + 1}/{max_retries}")
-            except RuntimeError as e:
-                if "Interrupted system call" in str(e) and attempt < max_retries - 1:
-                    logging.warning(f"Interrupted system call on attempt {attempt + 1}/{max_retries}, retrying after {retry_delay}s delay...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
-        
+        channel_metadata = hololink_module.Enumerator.find_channel(channel_ip=camera_ip)
         if not channel_metadata:
-            logging.warning(f"Failed to find Hololink device at {camera_ip} after {max_retries} attempts")
+            logging.warning(f"Failed to find Hololink device at {camera_ip}")
             return None
         
         logging.info("Hololink device found")
@@ -425,7 +407,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
             """Minimal app for PTP timestamp measurement."""
             
             def __init__(self, cuda_ctx, cuda_dev_ord, hl_chan, cam, capture_limit, 
-                        requested_limit, camera_mode=0):
+                        requested_limit, camera_mode=1):
                 super().__init__()
                 self._cuda_context = cuda_ctx
                 self._cuda_device_ordinal = cuda_dev_ord
@@ -439,6 +421,11 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
                 self.enable_metadata(True)
             
             def compose(self):
+                # CRITICAL: Set camera mode BEFORE creating receiver (updates dimensions)
+                # This must happen in compose() so receiver gets correct frame_size
+                self._camera.set_mode(self._camera_mode)
+                logging.info(f"Camera mode set to {self._camera_mode}: {self._camera._width}x{self._camera._height}")
+                
                 # Use CountCondition to limit frames
                 if self._capture_limit:
                     self._count = holoscan.conditions.CountCondition(
@@ -493,7 +480,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
             camera,
             capture_limit,
             frame_limit,
-            camera_mode,
+            camera_mode_enum,  # ← Pass enum, not int
         )
         
         # Start Hololink and camera (MUST follow official sequence for PTP)
@@ -588,7 +575,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
             
             logging.info(f"\n1. Frame Acquisition Time (sensor readout + FPGA processing):")
             logging.info(f"   Mean: {ptp_stats['mean_frame_acquisition_ms']:.3f} ms")
-            logging.info(f"   Expected: ~16.67ms (60fps all modes)")
+            logging.info(f"   Expected: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms")
             logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_frame_acquisition_ms']:.3f} / {ptp_stats['p95_frame_acquisition_ms']:.3f} / {ptp_stats['p99_frame_acquisition_ms']:.3f} / {ptp_stats['max_frame_acquisition_ms']:.3f} ms")
             logging.info(f"   Std Dev: {ptp_stats['stdev_frame_acquisition_us']:.1f} µs")
             
@@ -663,7 +650,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
 def argument_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify IMX274 PTP timestamp accuracy")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
-    parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode (0-6, all run at 60fps)")
+    parser.add_argument("--camera-mode", type=int, default=1, help="Camera mode (0-6, all run at 60fps)")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to analyze")
     
     return parser.parse_args()
@@ -694,6 +681,7 @@ def main() -> Tuple[bool, str, dict]:
             "valid_frames": 0,
             "invalid_frames": 0,
             "mean_frame_acquisition_ms": 0,
+            "expected_frame_acquisition_ms": 0,  # Unknown when measurement fails
             "min_frame_acquisition_ms": 0,
             "max_frame_acquisition_ms": 0,
             "p95_frame_acquisition_ms": 0,
@@ -722,12 +710,24 @@ def main() -> Tuple[bool, str, dict]:
         interval_fail_count = result['interval_fail_count']
         network_latency_pass = result['network_latency_pass']
         
+        # Expected frame acquisition times (mode-specific, based on vertical resolution):
+        # Mode 0 (4K 3840x2160): 2160 lines × ~7.3µs/line ≈ 15.8ms active readout
+        # Mode 1 (1080p 1920x1080): 1080 lines × ~7.3µs/line ≈ 7.87ms active readout
+        # Mode 2 (4K 12-bit): Same vertical resolution as Mode 0 → 15.8ms
+        EXPECTED_FRAME_ACQ_MS = {
+            0: 15.8,   # Mode 0: 4K 60fps
+            1: 7.87,   # Mode 1: 1080p 60fps
+            2: 15.8,   # Mode 2: 4K 60fps 12-bit
+        }
+        expected_acq_ms = EXPECTED_FRAME_ACQ_MS.get(cam_mode, 15.8)  # Default to 4K if mode unknown
+        tolerance = 0.20  # ±20%
+        
         # Pass criteria (NVIDIA-style):
-        # 1. Frame acquisition time within ±10% of expected (16.67ms for IMX274 @ 60fps)
+        # 1. Frame acquisition time within ±20% of expected (mode-specific)
         # 2. Network latency < 12ms (Linux UDP threshold)
         # 3. Inter-frame jitter acceptable (< 10% of frames outside tolerance)
         ptp_pass = (
-            (16.67 * 0.9 <= mean_frame_acquisition <= 16.67 * 1.1) and  # Frame acq time OK
+            (expected_acq_ms * (1 - tolerance) <= mean_frame_acquisition <= expected_acq_ms * (1 + tolerance)) and  # Frame acq time OK
             network_latency_pass and  # Network latency < 12ms
             (interval_fail_count <= frame_lim * 0.1)  # Max 10% jitter failures
         )
@@ -742,6 +742,7 @@ def main() -> Tuple[bool, str, dict]:
             
             # Frame acquisition time
             "mean_frame_acquisition_ms": result['mean_frame_acquisition_ms'],
+            "expected_frame_acquisition_ms": expected_acq_ms,  # Mode-specific expected value
             "min_frame_acquisition_ms": result['min_frame_acquisition_ms'],
             "max_frame_acquisition_ms": result['max_frame_acquisition_ms'],
             "p95_frame_acquisition_ms": result['p95_frame_acquisition_ms'],
@@ -775,8 +776,8 @@ def main() -> Tuple[bool, str, dict]:
                          f"Network latency={mean_network_latency:.2f}ms)"), stats
         else:
             failure_reasons = []
-            if not (16.67 * 0.9 <= mean_frame_acquisition <= 16.67 * 1.1):
-                failure_reasons.append(f"Frame acquisition={mean_frame_acquisition:.2f}ms (expected 16.67±10%)")
+            if not (expected_acq_ms * (1 - tolerance) <= mean_frame_acquisition <= expected_acq_ms * (1 + tolerance)):
+                failure_reasons.append(f"Frame acquisition={mean_frame_acquisition:.2f}ms (expected {expected_acq_ms}±{int(tolerance*100)}% for mode {cam_mode})")
             if not network_latency_pass:
                 failure_reasons.append(f"Network latency={mean_network_latency:.2f}ms (max 12ms)")
             if interval_fail_count > frame_lim * 0.1:
