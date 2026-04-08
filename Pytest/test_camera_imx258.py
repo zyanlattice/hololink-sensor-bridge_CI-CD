@@ -210,7 +210,7 @@ def test_camera_save_img(hololink_device_ip, camera_id, camera_mode, record_test
     (4, 800, False),  # Default lanes, rate 800 - expected fail
     (4, 100, False),  # Default lanes, rate 100 - expected fail
     (1, 371, False),  # 1 lane, default rate - expected fail
-    (2, 371, False),  # 2 lanes, default rate - expected fail
+    (3, 371, False),  # 3 lanes, default rate - expected fail
 ])
 def test_camera_lane_config(hololink_device_ip, camera_id, camera_mode, lane_num, lane_rate, expected_pass, record_test_result):
     """Test IMX258 camera with edge cases for lane number and lane rate configurations."""
