@@ -4,7 +4,7 @@ import sys
 import argparse
 import holoscan
 import hololink as hololink_module
-
+import time
 
 def argument_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify IMX274 camera driver functionality")

@@ -4,6 +4,7 @@ import sys
 import argparse
 import holoscan
 import hololink as hololink_module
+import time
 
 
 def argument_parser() -> argparse.Namespace:
