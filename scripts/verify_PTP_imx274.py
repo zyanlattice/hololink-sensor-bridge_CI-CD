@@ -1,3 +1,4 @@
+import ctypes
 import re
 import subprocess
 from typing import Optional, Tuple
@@ -6,6 +7,8 @@ from pathlib import Path
 import logging
 import time
 import argparse
+import statistics
+import os
 import threading
 
 # Configure logging to show in terminal
@@ -19,6 +22,7 @@ _script_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(_script_dir))
 
 import cuda.bindings.driver as cuda
+import cupy as cp
 import holoscan
 import hololink as hololink_module
 import datetime
@@ -31,10 +35,10 @@ NS_PER_SEC = 1000.0 * US_PER_SEC
 SEC_PER_NS = 1.0 / NS_PER_SEC
 
 
-def get_timestamp(metadata: dict, name: str) -> float:
+def get_timestamp(metadata, name):
     """Extract PTP timestamp from metadata (seconds + nanoseconds)."""
-    s = metadata.get(f"{name}_s", 0)
-    f = metadata.get(f"{name}_ns", 0)
+    s = metadata[f"{name}_s"]
+    f = metadata[f"{name}_ns"]
     f *= SEC_PER_NS
     return s + f
 
@@ -45,36 +49,107 @@ def save_timestamp(metadata: dict, name: str, timestamp: datetime.datetime) -> N
     metadata[f"{name}_s"] = int(s)
     metadata[f"{name}_ns"] = int(f * NS_PER_SEC)
 
+def record_times(recorder_queue, metadata):
+    """Record all timestamps from metadata to queue for later analysis."""
+    frame_number = metadata.get("frame_number", 0)
+    
+    # Extract all 5 timestamps
+    frame_start_s = get_timestamp(metadata, "timestamp")
+    frame_end_s = get_timestamp(metadata, "metadata")
+    received_timestamp_s = get_timestamp(metadata, "received")
+    operator_timestamp_s = get_timestamp(metadata, "operator_timestamp")
+    complete_timestamp_s = get_timestamp(metadata, "complete_timestamp")
+    
+    recorder_queue.append(
+        (
+            frame_start_s,
+            frame_end_s,
+            received_timestamp_s,
+            operator_timestamp_s,
+            complete_timestamp_s,
+            frame_number,
+        )
+    )
+
+class InstrumentedTimeProfiler(holoscan.core.Operator):
+    def __init__(
+        self,
+        *args,
+        recorder_queue=None,
+        operator_name="operator",
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._recorder_queue = recorder_queue
+        self._operator_name = operator_name
+
+    def setup(self, spec):
+        logging.info("InstrumentedTimeProfiler setup")
+        spec.input("input")
+        spec.output("output")
+
+    def compute(self, op_input, op_output, context):
+        # What time is it now?
+        operator_timestamp = datetime.datetime.utcnow()
+
+        in_message = op_input.receive("input")
+        cp_frame = cp.asarray(in_message.get(""))
+        save_timestamp(
+            self.metadata, self._operator_name + "_timestamp", operator_timestamp
+        )
+        op_output.emit({"": cp_frame}, "output")
+
+class MonitorOperator(holoscan.core.Operator):
+    def __init__(
+        self,
+        *args,
+        recorder_queue=None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._recorder_queue = recorder_queue
+
+    def setup(self, spec):
+        logging.info("MonitorOperator setup")
+        spec.input("input")
+        spec.output("output")  # Pass through to FrameCounterOp
+
+    def compute(self, op_input, op_output, context):
+        # What time is it now?
+        complete_timestamp = datetime.datetime.utcnow()
+        
+        in_message = op_input.receive("input")
+        
+        # Save complete_timestamp to metadata
+        save_timestamp(self.metadata, "complete_timestamp", complete_timestamp)
+        
+        # Record all timestamps to queue for analysis
+        record_times(self._recorder_queue, self.metadata)
+        # Pass through to next operator (FrameCounterOp)
+        op_output.emit(in_message, "output")
 
 class FrameCounterOp(holoscan.core.Operator):
     """
     Terminal operator for comprehensive PTP timestamp analysis.
     
-    Captures 3 timestamps per frame (NVIDIA-style):
-    1. frame_start: FPGA first data byte (PTP domain)
-    2. frame_end: FPGA last data byte + metadata (PTP domain)
-    3. received: Host reception time (Unix epoch, for network latency)
+    Reads 5 timestamps per frame from metadata (NVIDIA-style):
+    1. frame_start: FPGA first data byte (PTP domain) - from receiver
+    2. frame_end: FPGA last data byte + metadata (PTP domain) - from receiver
+    3. received: Host reception time (Unix epoch) - from receiver
+    4. operator_timestamp: After receiver processing - from InstrumentedTimeProfiler
+    5. complete_timestamp: After ISP/visualization processing - from MonitorOperator
+    
+    Consolidates all timing metrics like the latency script's main() function.
     """
     
     def __init__(self, *args, frame_limit=50, requested_limit=None, app=None, 
                  pass_through=False, camera=None, hololink=None, 
-                 save_images=False, camera_mode=1, **kwargs):
+                 save_images=False, camera_mode=0, **kwargs):
         self.pass_through = pass_through
-        self.frame_limit = frame_limit  # Actual capture limit (requested + 10 for dropping)
-        self.requested_limit = requested_limit or frame_limit  # What user requested (for reporting)
+        self.frame_limit = frame_limit  
         self.frame_count = 0
         self.start_time = None
         self.camera_mode = camera_mode  # Store for mode-aware tolerance checking
-        
-        # Timestamp storage (3 timestamps per frame like NVIDIA script)
-        self.frame_start_times = []      # T1: FPGA first data byte (PTP domain)
-        self.frame_end_times = []        # T2: FPGA last data byte + metadata (PTP domain)
-        self.received_timestamps = []    # T3: Host reception time (Unix epoch)
-        
-        # Diagnostic counters
-        self.invalid_domain_count = 0    # Timestamps > 10000s (Unix epoch)
-        self.invalid_ordering_count = 0  # frame_end <= frame_start
-        self.missing_timestamp_count = 0 # None values
         
         self.app = app
         self.camera = camera
@@ -93,76 +168,14 @@ class FrameCounterOp(holoscan.core.Operator):
             in_message = op_input.receive("input")
             return
         
-        # CRITICAL: Capture host reception timestamp IMMEDIATELY after receiving message
-        # This measures network latency (FPGA → Host)
+        # Receive frame with all metadata from previous operators
         in_message = op_input.receive("input")
-        received_time = time.time()  # Unix epoch timestamp (for network latency calculation)
         
         if self.start_time is None:
             self.start_time = time.time()
         
         self.frame_count += 1
         
-        # Read PTP timestamps from FPGA - copy BOTH timestamps immediately to avoid race condition
-        try:
-            # Read both timestamps as close together as possible to minimize race window
-            frame_start_s = get_timestamp(self.metadata, "timestamp")      # FPGA: first data byte
-            frame_end_s = get_timestamp(self.metadata, "metadata")         # FPGA: last data byte + metadata
-            timestamp_pair = (frame_start_s, frame_end_s)  # Store as tuple immediately
-            
-            # Validate timestamp domain: PTP timestamps are relative to device boot (< 10000 seconds)
-            # Unix epoch timestamps are ~1.77 billion seconds (March 2026)
-            MAX_PTP_TIMESTAMP = 10000  # 10000 seconds = ~2.7 hours since boot (generous)
-            MAX_FRAME_ACQ_TIME = 0.1   # 100ms max for frame acquisition (catches race condition corruption)
-            
-            frame_start_s, frame_end_s = timestamp_pair  # Unpack from tuple
-            
-            # Validate: frame_end > frame_start (should be ~16.67ms apart for IMX274 at 60fps)
-            is_valid_ptp_start = frame_start_s is not None and 0 < frame_start_s < MAX_PTP_TIMESTAMP
-            is_valid_ptp_end = frame_end_s is not None and 0 < frame_end_s < MAX_PTP_TIMESTAMP
-            is_valid_ordering = frame_end_s > frame_start_s if (is_valid_ptp_start and is_valid_ptp_end) else False
-            is_valid_acq_time = (frame_end_s - frame_start_s) < MAX_FRAME_ACQ_TIME if is_valid_ordering else False
-            
-            if is_valid_ptp_start and is_valid_ptp_end and is_valid_ordering and is_valid_acq_time:
-                # All timestamps valid - store them
-                self.frame_start_times.append(frame_start_s)
-                self.frame_end_times.append(frame_end_s)
-                self.received_timestamps.append(received_time)
-                
-                if self.frame_count == 1:
-                    logging.info(f"✓ PTP metadata available (frame_start={frame_start_s:.3f}s, frame_end={frame_end_s:.3f}s, received={received_time:.3f}s)")
-            else:
-                # Invalid timestamps - track failure reasons
-                if not is_valid_ptp_start or not is_valid_ptp_end:
-                    self.invalid_domain_count += 1
-                    reason = "domain (Unix epoch)"
-                elif not is_valid_ordering:
-                    self.invalid_ordering_count += 1
-                    reason = "ordering (end <= start)"
-                elif not is_valid_acq_time:
-                    self.invalid_ordering_count += 1
-                    acq_time_ms = (frame_end_s - frame_start_s) * 1000
-                    reason = f"acquisition time too large ({acq_time_ms:.1f}ms)"
-                else:
-                    reason = "unknown"
-                
-                if self.frame_count == 1:
-                    logging.warning(f"⚠️  Invalid timestamp {reason}: frame_start={frame_start_s:.3f}s, frame_end={frame_end_s:.3f}s")
-                elif self.frame_count % 50 == 0:
-                    logging.warning(f"Frame {self.frame_count}: Invalid timestamp {reason}")
-                
-                # Store None for invalid frames
-                self.frame_start_times.append(None)
-                self.frame_end_times.append(None)
-                self.received_timestamps.append(None)
-                
-        except Exception as e:
-            logging.warning(f"Could not read PTP timestamps from metadata: {e}")
-            self.missing_timestamp_count += 1
-            self.frame_start_times.append(None)
-            self.frame_end_times.append(None)
-            self.received_timestamps.append(None)
-
         if self.frame_count % 10 == 0:
             elapsed = time.time() - self.start_time
             fps = self.frame_count / elapsed if elapsed > 0 else 0
@@ -194,153 +207,6 @@ class FrameCounterOp(holoscan.core.Operator):
                 
                 stop_thread = threading.Thread(target=stop_everything, daemon=True)
                 stop_thread.start()
-    
-    def get_ptp_timing_stats(self, drop_frames=5) -> dict:
-        """
-        Comprehensive PTP timing analysis (NVIDIA-style).
-        
-        Analyzes:
-        1. Frame acquisition time (sensor readout + FPGA processing)
-        2. Inter-frame jitter (PTP clock stability)
-        3. Network latency (FPGA → Host) - NEW
-        
-        Args:
-            drop_frames: Number of frames to drop from start AND end for stability.
-                        Default=5 matches NVIDIA script behavior.
-        """
-        import statistics
-        
-        # Filter out None values (frames where PTP metadata wasn't available)
-        valid_indices = [i for i in range(len(self.frame_start_times)) 
-                        if self.frame_start_times[i] is not None 
-                        and self.frame_end_times[i] is not None
-                        and self.received_timestamps[i] is not None]
-        
-        # Drop first/last N frames for stability (NVIDIA approach: settled_timestamps)
-        if drop_frames > 0 and len(valid_indices) > drop_frames * 2:
-            valid_indices = valid_indices[drop_frames:-drop_frames]
-            logging.info(f"Dropped first/last {drop_frames} frames for stability (NVIDIA approach)")
-        
-        if len(valid_indices) < 2:
-            return {"error": "Insufficient PTP timestamp data"}
-        
-        # === 1. Frame Acquisition Time (sensor readout + FPGA processing) ===
-        frame_acquisition_times = []
-        validated_indices = []
-        
-        for i in valid_indices:
-            frame_start = self.frame_start_times[i]
-            frame_end = self.frame_end_times[i]
-            
-            # Frame acquisition = time from sensor start to FPGA metadata ready
-            # Mode-specific: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms
-            frame_time_dt = frame_end - frame_start
-            
-            # Sanity check: should be positive and < 100ms
-            if frame_time_dt < 0 or frame_time_dt > 0.1:
-                logging.warning(f"Unreasonable frame acquisition time in frame {i}: {frame_time_dt*1000:.2f}ms (skipping)")
-                continue
-            
-            frame_acquisition_times.append(frame_time_dt)
-            validated_indices.append(i)
-        
-        # Check if we have enough valid data after filtering
-        if len(frame_acquisition_times) < 2:
-            logging.error(f"Insufficient valid PTP data: only {len(frame_acquisition_times)} frames")
-            return {"error": "Insufficient valid PTP timestamp data after filtering"}
-        
-        # === 2. Inter-Frame Jitter (PTP clock stability) ===
-        valid_ptp_timestamps = [self.frame_end_times[i] for i in validated_indices]
-        ptp_intervals = [valid_ptp_timestamps[i+1] - valid_ptp_timestamps[i] 
-                        for i in range(len(valid_ptp_timestamps) - 1)]
-        
-        # IMX274: 60fps all modes (16.67ms interval)
-        expected_interval_ms = 16.67  # All modes run at 60fps
-        tolerance = 1.05  # 5% tolerance
-        interval_fail_cnt = sum(1 for intv in ptp_intervals if intv*1000 >= expected_interval_ms * tolerance)
-        
-        # === 3. Network Latency (FPGA → Host) - NEW ===
-        # Calculate time from FPGA metadata ready to host reception
-        # NOTE: This requires converting PTP time to Unix epoch using boot_time offset
-        # For simplicity, we use the FIRST frame to calculate boot_time offset
-        first_valid_idx = validated_indices[0]
-        boot_time_offset = self.received_timestamps[first_valid_idx] - self.frame_end_times[first_valid_idx]
-        
-        network_latencies = []
-        for i in validated_indices:
-            # Convert PTP timestamp to Unix epoch using boot_time offset
-            fpga_time_unix = self.frame_end_times[i] + boot_time_offset
-            host_received_time = self.received_timestamps[i]
-            
-            # Network latency = host received - FPGA metadata ready (in Unix epoch)
-            latency = host_received_time - fpga_time_unix
-            
-            # Sanity check: latency should be positive and < 100ms for Linux UDP
-            if latency < 0 or latency > 0.1:
-                logging.warning(f"Unreasonable network latency in frame {i}: {latency*1000:.2f}ms (skipping)")
-                continue
-            
-            network_latencies.append(latency)
-        
-        if len(network_latencies) < 2:
-            logging.warning("Insufficient network latency data after filtering")
-            network_latencies = [0.0]  # Fallback to avoid crash
-        
-        # Calculate percentile statistics for outlier analysis
-        sorted_acq_times = sorted(frame_acquisition_times)
-        sorted_latencies = sorted(network_latencies)
-        p95_acq_idx = int(len(sorted_acq_times) * 0.95)
-        p99_acq_idx = int(len(sorted_acq_times) * 0.99)
-        p95_lat_idx = int(len(sorted_latencies) * 0.95)
-        p99_lat_idx = int(len(sorted_latencies) * 0.99)
-        
-        # NVIDIA script validation thresholds:
-        # - Linux UDP: average latency < 12ms
-        # - RoCE: average latency < 4ms (not applicable for AGX Orin)
-        avg_network_latency_ms = statistics.mean(network_latencies) * 1000
-        max_network_latency_ms = max(network_latencies) * 1000
-        
-        # Validation: Linux UDP should have < 12ms average latency
-        LINUX_MAX_AVG_LATENCY_MS = 12.0
-        latency_pass = avg_network_latency_ms < LINUX_MAX_AVG_LATENCY_MS
-        
-        return {
-            "frame_count": self.requested_limit,
-            "frames_captured": self.frame_count,
-            "valid_frames": len(validated_indices),
-            "invalid_frames": self.frame_count - len(validated_indices),
-            
-            # Frame acquisition time (sensor active readout + FPGA processing)
-            # Mode-specific: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms
-            "mean_frame_acquisition_ms": statistics.mean(frame_acquisition_times) * 1000,
-            "min_frame_acquisition_ms": min(frame_acquisition_times) * 1000,
-            "max_frame_acquisition_ms": max(frame_acquisition_times) * 1000,
-            "p95_frame_acquisition_ms": sorted_acq_times[p95_acq_idx] * 1000,
-            "p99_frame_acquisition_ms": sorted_acq_times[p99_acq_idx] * 1000,
-            "stdev_frame_acquisition_us": statistics.stdev(frame_acquisition_times) * 1000000 if len(frame_acquisition_times) > 1 else 0,
-            
-            # Inter-frame jitter (PTP clock stability)
-            "mean_frame_interval_ms": statistics.mean(ptp_intervals) * 1000,
-            "stdev_frame_interval_ms": statistics.stdev(ptp_intervals) * 1000 if len(ptp_intervals) > 1 else 0,
-            "frame_jitter_pct": (statistics.stdev(ptp_intervals) / statistics.mean(ptp_intervals) * 100) if statistics.mean(ptp_intervals) > 0 else 0,
-            "interval_fail_count": interval_fail_cnt,
-            
-            # Network latency (FPGA → Host) - NEW
-            "mean_network_latency_ms": avg_network_latency_ms,
-            "min_network_latency_ms": min(network_latencies) * 1000,
-            "max_network_latency_ms": max_network_latency_ms,
-            "p95_network_latency_ms": sorted_latencies[p95_lat_idx] * 1000,
-            "p99_network_latency_ms": sorted_latencies[p99_lat_idx] * 1000,
-            "stdev_network_latency_us": statistics.stdev(network_latencies) * 1000000 if len(network_latencies) > 1 else 0,
-            "network_latency_pass": latency_pass,
-            "max_allowed_latency_ms": LINUX_MAX_AVG_LATENCY_MS,
-            
-            # Metadata for reporting
-            "expected_interval_ms": expected_interval_ms,
-            "camera_mode": self.camera_mode,
-            "test_duration_sec": valid_ptp_timestamps[-1] - valid_ptp_timestamps[0] if len(valid_ptp_timestamps) > 1 else 0,
-            "boot_time_offset": boot_time_offset,  # For debugging
-        }
 
 
 def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300, 
@@ -350,7 +216,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
     
     Args:
         camera_ip: IP of Hololink device
-        frame_limit: Number of frames to analyze (captures frame_limit + 10 for dropping)
+        frame_limit: Number of frames to analyze 
         timeout_seconds: Maximum time to wait
         camera_mode: Camera mode (0-6, all run at 60fps)
         
@@ -403,19 +269,21 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
         camera_mode_enum = hololink_module.sensors.imx274.imx274_mode.Imx274_Mode(camera_mode)
         
         # Minimal application for PTP measurement
-        class PTSApplication(holoscan.core.Application):
+        class HoloscanApplication(holoscan.core.Application):
             """Minimal app for PTP timestamp measurement."""
             
-            def __init__(self, cuda_ctx, cuda_dev_ord, hl_chan, cam, capture_limit, 
-                        requested_limit, camera_mode=1):
+            def __init__(self, cuda_ctx, cuda_dev_ord, hl_chan, cam, frame_limit, 
+                        camera_mode=1, headless=False, fullscreen=True):
                 super().__init__()
                 self._cuda_context = cuda_ctx
                 self._cuda_device_ordinal = cuda_dev_ord
                 self._hololink_channel = hl_chan
                 self._camera = cam
-                self._capture_limit = capture_limit  # Actual frames to capture (requested + 10)
-                self._requested_limit = requested_limit  # What user requested (for reporting)
+                self._frame_limit = frame_limit  
                 self._camera_mode = camera_mode
+                self._headless = False  # Hardcoded: Always show window
+                self._fullscreen = True  # Hardcoded: Always fullscreen for best performance
+                self._recorder_queue = []  # Not used but needed for operator compatibility
                 self._frame_counter = None
                 # Enable metadata access from C++ receiver (required for PTP timestamps)
                 self.enable_metadata(True)
@@ -427,11 +295,11 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
                 logging.info(f"Camera mode set to {self._camera_mode}: {self._camera._width}x{self._camera._height}")
                 
                 # Use CountCondition to limit frames
-                if self._capture_limit:
+                if self._frame_limit:
                     self._count = holoscan.conditions.CountCondition(
                         self,
                         name="count",
-                        count=self._capture_limit,
+                        count=self._frame_limit,
                     )
                     count_condition = self._count
                 else:
@@ -440,60 +308,139 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
                     )
                     count_condition = self._ok
                 
-                # Receiver operator - raw frame receive
+                csi_to_bayer_pool = holoscan.resources.BlockMemoryPool(
+                    self,
+                    name="pool",
+                    # storage_type of 1 is device memory
+                    storage_type=1,
+                    block_size=self._camera._width
+                    * ctypes.sizeof(ctypes.c_uint16)
+                    * self._camera._height,
+                    num_blocks=2,
+                )
+                csi_to_bayer_operator = hololink_module.operators.CsiToBayerOp(
+                    self,
+                    name="csi_to_bayer",
+                    allocator=csi_to_bayer_pool,
+                    cuda_device_ordinal=self._cuda_device_ordinal,
+                )
+                self._camera.configure_converter(csi_to_bayer_operator)
+
+                frame_size = csi_to_bayer_operator.get_csi_length()
                 receiver_operator = hololink_module.operators.LinuxReceiverOperator(
                     self,
                     count_condition,
                     name="receiver",
-                    frame_size=self._camera._width * self._camera._height * 2,  # RAW10, 16-bit per pixel
+                    frame_size=frame_size,
                     frame_context=self._cuda_context,
                     hololink_channel=self._hololink_channel,
                     device=self._camera
                 )
-                
+
+                pixel_format = self._camera.pixel_format()
+                bayer_format = self._camera.bayer_format()
+                image_processor_operator = hololink_module.operators.ImageProcessorOp(
+                    self,
+                    name="image_processor",
+                    optical_black=50,
+                    bayer_format=bayer_format.value,
+                    pixel_format=pixel_format.value,
+                )
+
+                rgba_components_per_pixel = 4
+                bayer_pool = holoscan.resources.BlockMemoryPool(
+                    self,
+                    name="pool",
+                    # storage_type of 1 is device memory
+                    storage_type=1,
+                    block_size=self._camera._width
+                    * rgba_components_per_pixel
+                    * ctypes.sizeof(ctypes.c_uint16)
+                    * self._camera._height,
+                    num_blocks=2,
+                )
+                demosaic = holoscan.operators.BayerDemosaicOp(
+                    self,
+                    name="demosaic",
+                    pool=bayer_pool,
+                    generate_alpha=True,
+                    alpha_value=65535,
+                    bayer_grid_pos=bayer_format.value,
+                    interpolation_mode=0,
+                )
+
+                visualizer = holoscan.operators.HolovizOp(
+                    self,
+                    name="holoviz",
+                    fullscreen=self._fullscreen,
+                    headless=self._headless,
+                    framebuffer_srgb=True,
+                    enable_camera_pose_output=True,
+                    camera_pose_output_type="extrinsics_model",
+                )
+
                 # Frame counter as terminal operator
                 self._frame_counter = FrameCounterOp(
                     self,
                     name="frame_counter",
-                    frame_limit=self._capture_limit,
-                    requested_limit=self._requested_limit,
+                    frame_limit=self._frame_limit,
                     pass_through=False,
                     camera_mode=self._camera_mode
                 )
                 
-                # Pipeline: receiver → frame_counter (terminal)
-                self.add_flow(receiver_operator, self._frame_counter, {("output", "input")})
+                profiler = InstrumentedTimeProfiler(
+                    self,
+                    name="profiler",
+                    recorder_queue=self._recorder_queue,
+                )
+
+                monitor = MonitorOperator(
+                    self,
+                    name="monitor",
+                    recorder_queue=self._recorder_queue,
+                )
+                
+                # Pipeline: receiver → profiler → csi_to_bayer → processor → demosaic → visualizer → monitor → frame_counter
+                self.add_flow(receiver_operator, profiler, {("output", "input")})
+                self.add_flow(profiler, csi_to_bayer_operator, {("output", "input")})
+                self.add_flow(csi_to_bayer_operator, image_processor_operator, {("output", "input")})
+                self.add_flow(image_processor_operator, demosaic, {("output", "receiver")})
+                self.add_flow(demosaic, visualizer, {("transmitter", "receivers")})
+                self.add_flow(visualizer, monitor, {("camera_pose_output", "input")})
+                self.add_flow(monitor, self._frame_counter, {("output", "input")})
             
             def get_frame_count(self) -> int:
-                return self._frame_counter.frame_count if self._frame_counter else 0
+                # Return count from recorder queue since frame_counter is commented out
+                return len(self._recorder_queue) if self._recorder_queue else 0
         
-        # Create application
-        # Add 10 frames to capture limit (for dropping first/last 5) but report requested count
-        FRAMES_TO_DROP = 10  # Drop 5 from start + 5 from end
-        capture_limit = frame_limit + FRAMES_TO_DROP
-        logging.info(f"Capturing {capture_limit} frames (analyzing {frame_limit} after dropping first/last 5)...")
-        
-        application = PTSApplication(
+        # Create application        
+        application = HoloscanApplication(
             cu_context,
             cu_device_ordinal,
             hololink_channel,
             camera,
-            capture_limit,
             frame_limit,
             camera_mode_enum,  # ← Pass enum, not int
         )
         
-        # Start Hololink and camera (MUST follow official sequence for PTP)
+        # Start Hololink and camera (IMX274-specific sequence - MUST follow official order for PTP)
         logging.info("Starting Hololink...")
         hololink = hololink_channel.hololink()
         hololink.start()
-        hololink.reset()  # Ensure clean state and PTP sync
+        #hololink.reset()  # Ensure clean state
 
-        # Configure camera AFTER PTP is ready (IMX274-specific sequence)
+        # CRITICAL: Synchronize PTP clock (same as IMX258)
+        logging.info("Synchronizing PTP clock...")
+        if not hololink.ptp_synchronize():
+            logging.error("Failed to synchronize PTP - timestamps will be invalid")
+            return None
+        logging.info("PTP synchronized successfully")
+
+        # Configure camera AFTER PTP sync (IMX274-specific sequence)
         logging.info("Configuring camera...")
-        camera.setup_clock()
+        camera.setup_clock()  # IMX274-specific
         camera.configure(camera_mode_enum)
-        camera.set_digital_gain_reg(0x4)  # Set digital gain
+        camera.set_digital_gain_reg(0x4)  # IMX274-specific
         
         start_time = time.time()
         
@@ -555,60 +502,207 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
         
         stop_event.set()
         
-        # Report PTP timing analysis
-        ptp_stats = application._frame_counter.get_ptp_timing_stats()
-        if ptp_stats and "error" not in ptp_stats:
-            logging.info(f"\n{'='*80}")
-            logging.info(f"PTP Timestamp Analysis (IMX274, Linux UDP)")
-            logging.info(f"{'='*80}")
-            logging.info(f"Frames captured: {ptp_stats['frames_captured']} (requested: {ptp_stats['frame_count']}, +10 for dropping)")
-            logging.info(f"Frames analyzed: {ptp_stats['valid_frames']}/{ptp_stats['frame_count']} (after dropping & filtering)")
-            
-            # Show breakdown of invalid frames
-            frame_counter = application._frame_counter
-            total_invalid = frame_counter.invalid_domain_count + frame_counter.invalid_ordering_count + frame_counter.missing_timestamp_count
-            if total_invalid > 0:
-                logging.info(f"\nInvalid frames breakdown:")
-                logging.info(f"   Domain violations (Unix epoch): {frame_counter.invalid_domain_count}")
-                logging.info(f"   Ordering violations (end <= start): {frame_counter.invalid_ordering_count}")
-                logging.info(f"   Missing timestamps: {frame_counter.missing_timestamp_count}")
-            
-            logging.info(f"\n1. Frame Acquisition Time (sensor readout + FPGA processing):")
-            logging.info(f"   Mean: {ptp_stats['mean_frame_acquisition_ms']:.3f} ms")
-            logging.info(f"   Expected: Mode 0 (4K) ~15.8ms, Mode 1 (1080p) ~7.87ms, Mode 2 (4K 12-bit) ~15.8ms")
-            logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_frame_acquisition_ms']:.3f} / {ptp_stats['p95_frame_acquisition_ms']:.3f} / {ptp_stats['p99_frame_acquisition_ms']:.3f} / {ptp_stats['max_frame_acquisition_ms']:.3f} ms")
-            logging.info(f"   Std Dev: {ptp_stats['stdev_frame_acquisition_us']:.1f} µs")
-            
-            logging.info(f"\n2. Inter-Frame Jitter (PTP clock stability):")
-            logging.info(f"   Mean interval: {ptp_stats['mean_frame_interval_ms']:.3f} ms (expected: ~16.67 ms)")
-            logging.info(f"   Jitter: {ptp_stats['frame_jitter_pct']:.3f}%")
-            logging.info(f"   Std Dev: {ptp_stats['stdev_frame_interval_ms']:.3f} ms")
-            logging.info(f"   Frames outside tolerance: {ptp_stats['interval_fail_count']}")
-            
-            if ptp_stats['frame_jitter_pct'] > 10.0:
-                logging.warning(f"   ⚠️  High jitter ({ptp_stats['frame_jitter_pct']:.2f}%) - check camera configuration")
-            else:
-                logging.info(f"   ✓ Frame timing is stable")
-            
-            # NEW: Network latency analysis
-            logging.info(f"\n3. Network Latency (FPGA → Host, Linux UDP):")
-            logging.info(f"   Mean: {ptp_stats['mean_network_latency_ms']:.3f} ms")
-            logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_network_latency_ms']:.3f} / {ptp_stats['p95_network_latency_ms']:.3f} / {ptp_stats['p99_network_latency_ms']:.3f} / {ptp_stats['max_network_latency_ms']:.3f} ms")
-            logging.info(f"   Std Dev: {ptp_stats['stdev_network_latency_us']:.1f} µs")
-            logging.info(f"   Max allowed (Linux UDP): < {ptp_stats['max_allowed_latency_ms']:.1f} ms")
-            
-            if ptp_stats['network_latency_pass']:
-                logging.info(f"   ✓ Network latency is within specification")
-            else:
-                logging.warning(f"   ⚠️  Network latency exceeds {ptp_stats['max_allowed_latency_ms']:.1f}ms threshold")
-            
-            logging.info(f"\n{'='*80}\n")
-            return ptp_stats
-        elif ptp_stats and "error" in ptp_stats:
-            logging.warning(f"PTP timing stats unavailable: {ptp_stats['error']}")
+        # Get recorded timestamps from queue
+        recorder_queue = application._recorder_queue
+        if not recorder_queue or len(recorder_queue) < 100:
+            logging.error(f"Insufficient frames captured: {len(recorder_queue) if recorder_queue else 0}")
             return None
         
-        return None
+        # Calculate statistics from recorder queue (matching official script)
+        logging.info(f"Processing {len(recorder_queue)} captured frames...")
+        
+        # Drop first/last 5 frames for stability (NVIDIA approach)
+        settled_timestamps = recorder_queue[5:-5]
+        frames_analyzed = len(settled_timestamps)
+        
+        logging.info(f"Analyzing {frames_analyzed} frames after dropping first/last 5")
+        
+        # Calculate latencies for each frame
+        frame_time_dts = []
+        cpu_latency_dts = []
+        operator_latency_dts = []
+        processing_time_dts = []
+        overall_time_dts = []
+
+        
+        for (
+            frame_start_s,
+            frame_end_s,
+            received_timestamp_s,
+            operator_timestamp_s,
+            complete_timestamp_s,
+            frame_number,
+        ) in settled_timestamps:
+            frame_time_dt = frame_end_s - frame_start_s
+            frame_time_dts.append(frame_time_dt)
+            
+            cpu_latency_dt = received_timestamp_s - frame_end_s
+            cpu_latency_dts.append(cpu_latency_dt)
+            
+            operator_latency_dt = operator_timestamp_s - received_timestamp_s
+            operator_latency_dts.append(operator_latency_dt)
+            
+            processing_time_dt = complete_timestamp_s - operator_timestamp_s
+            processing_time_dts.append(processing_time_dt)
+                      
+            overall_time_dt = complete_timestamp_s - frame_start_s
+            overall_time_dts.append(overall_time_dt)
+        
+        # Calculate statistics (convert to ms)
+        sorted_frame_lat = sorted(frame_time_dts)
+        sorted_cpu_wake = sorted(cpu_latency_dts)
+        sorted_receiver = sorted(operator_latency_dts)
+        sorted_isp_viz = sorted(processing_time_dts)
+        sorted_total = sorted(overall_time_dts)
+
+        p95_idx = int(len(settled_timestamps) * 0.95)
+        p99_idx = int(len(settled_timestamps) * 0.99)
+        
+        ptp_stats = {
+            "frame_count": frame_limit,
+            "frames_captured": len(recorder_queue),
+            "frames_with_missing_metadata": 0,  # All frames in queue have complete timestamps
+            "frames_analyzed": frames_analyzed,
+            
+            # Frame Latency (sensor readout + FPGA processing)
+            "mean_frame_latency_ms": statistics.mean(frame_time_dts) * 1000,
+            "min_frame_latency_ms": min(frame_time_dts) * 1000,
+            "max_frame_latency_ms": max(frame_time_dts) * 1000,
+            "p95_frame_latency_ms": sorted_frame_lat[p95_idx] * 1000,
+            "p99_frame_latency_ms": sorted_frame_lat[p99_idx] * 1000,
+            "stdev_frame_latency_us": statistics.stdev(frame_time_dts) * 1000000 if len(frame_time_dts) > 1 else 0,
+
+
+            # CPU Wake Up Time
+            "mean_cpu_wakeup_ms": statistics.mean(cpu_latency_dts) * 1000,
+            "min_cpu_wakeup_ms": min(cpu_latency_dts) * 1000,
+            "max_cpu_wakeup_ms": max(cpu_latency_dts) * 1000,
+            "p95_cpu_wakeup_ms": sorted_cpu_wake[p95_idx] * 1000,
+            "p99_cpu_wakeup_ms": sorted_cpu_wake[p99_idx] * 1000,
+
+            
+            # ReceiverOp Latency
+            "mean_receiver_latency_ms": statistics.mean(operator_latency_dts) * 1000,
+            "min_receiver_latency_ms": min(operator_latency_dts) * 1000,
+            "max_receiver_latency_ms": max(operator_latency_dts) * 1000,
+            "p95_receiver_latency_ms": sorted_receiver[p95_idx] * 1000,
+            "p99_receiver_latency_ms": sorted_receiver[p99_idx] * 1000,
+            
+
+            # ISP + Visualizer Op Latency
+            "mean_isp_viz_latency_ms": statistics.mean(processing_time_dts) * 1000,
+            "min_isp_viz_latency_ms": min(processing_time_dts) * 1000,
+            "max_isp_viz_latency_ms": max(processing_time_dts) * 1000,
+            "p95_isp_viz_latency_ms": sorted_isp_viz[p95_idx] * 1000,
+            "p99_isp_viz_latency_ms": sorted_isp_viz[p99_idx] * 1000,
+            
+            
+            # Total Latency
+            "mean_total_latency_ms": statistics.mean(overall_time_dts) * 1000,
+            "min_total_latency_ms": min(overall_time_dts) * 1000,
+            "max_total_latency_ms": max(overall_time_dts) * 1000,
+            "p95_total_latency_ms": sorted_total[p95_idx] * 1000,
+            "p99_total_latency_ms": sorted_total[p99_idx] * 1000,
+            
+
+            # Calculate percentiles
+            "p95_frame_latency_ms": sorted_frame_lat[p95_idx] * 1000,
+            "p99_frame_latency_ms": sorted_frame_lat[p99_idx] * 1000,
+            "p95_cpu_wakeup_ms": sorted_cpu_wake[p95_idx] * 1000,
+            "p99_cpu_wakeup_ms": sorted_cpu_wake[p99_idx] * 1000,
+            "p95_receiver_latency_ms": sorted_receiver[p95_idx] * 1000,
+            "p99_receiver_latency_ms": sorted_receiver[p99_idx] * 1000,
+            "p95_isp_viz_latency_ms": sorted_isp_viz[p95_idx] * 1000,
+            "p99_isp_viz_latency_ms": sorted_isp_viz[p99_idx] * 1000,
+            "p95_total_latency_ms": sorted_total[p95_idx] * 1000,
+            "p99_total_latency_ms": sorted_total[p99_idx] * 1000,
+            
+            # Inter-frame jitter
+            "mean_frame_interval_ms": 0,  # Calculated below
+            "stdev_frame_interval_ms": 0,  # Calculated below
+            "frame_jitter_pct": 0,  # Calculated below
+            "interval_fail_count": 0,
+            "expected_interval_ms": 16.67,
+            "camera_mode": camera_mode,
+        }
+        
+        # Calculate inter-frame intervals
+        frame_end_times = [t[1] for t in settled_timestamps]
+        ptp_intervals = [frame_end_times[i+1] - frame_end_times[i] for i in range(len(frame_end_times) - 1)]
+        if ptp_intervals:
+            ptp_stats["mean_frame_interval_ms"] = statistics.mean(ptp_intervals) * 1000
+            ptp_stats["stdev_frame_interval_ms"] = statistics.stdev(ptp_intervals) * 1000 if len(ptp_intervals) > 1 else 0
+            ptp_stats["frame_jitter_pct"] = (statistics.stdev(ptp_intervals) / statistics.mean(ptp_intervals) * 100) if statistics.mean(ptp_intervals) > 0 else 0
+            ptp_stats["interval_fail_count"] = sum(1 for intv in ptp_intervals if intv*1000 >= 16.67 * 1.05)
+        
+        # Now report the statistics
+        logging.info(f"\n{'='*80}")
+        logging.info(f"PTP Timestamp Analysis (IMX274, Linux UDP)\n{'='*80}")
+        logging.info(f"Frames requested: {ptp_stats['frame_count']}")
+        logging.info(f"Frames captured: {ptp_stats['frames_captured']})")
+        logging.info(f"Frames analyzed: {ptp_stats['frames_analyzed']}")
+        
+        # Print detailed statistics
+        logging.info(f"\n1. Frame Latency (sensor readout + FPGA processing):")
+        logging.info(f"   Mean: {ptp_stats['mean_frame_latency_ms']:.3f} ms")
+        logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_frame_latency_ms']:.3f} / {ptp_stats['p95_frame_latency_ms']:.3f} / {ptp_stats['p99_frame_latency_ms']:.3f} / {ptp_stats['max_frame_latency_ms']:.3f} ms")
+        
+        logging.info(f"\n2. CPU Wake Up Time:")
+        logging.info(f"   Mean: {ptp_stats['mean_cpu_wakeup_ms']:.3f} ms")
+        logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_cpu_wakeup_ms']:.3f} / {ptp_stats['p95_cpu_wakeup_ms']:.3f} / {ptp_stats['p99_cpu_wakeup_ms']:.3f} / {ptp_stats['max_cpu_wakeup_ms']:.3f} ms")
+        
+        logging.info(f"\n3. LinuxReceiverOp Latency:")
+        logging.info(f"   Mean: {ptp_stats['mean_receiver_latency_ms']:.3f} ms")
+        logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_receiver_latency_ms']:.3f} / {ptp_stats['p95_receiver_latency_ms']:.3f} / {ptp_stats['p99_receiver_latency_ms']:.3f} / {ptp_stats['max_receiver_latency_ms']:.3f} ms")
+        
+        logging.info(f"\n4. ISP + Visualizer Op Latency:")
+        logging.info(f"   Mean: {ptp_stats['mean_isp_viz_latency_ms']:.3f} ms")
+        logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_isp_viz_latency_ms']:.3f} / {ptp_stats['p95_isp_viz_latency_ms']:.3f} / {ptp_stats['p99_isp_viz_latency_ms']:.3f} / {ptp_stats['max_isp_viz_latency_ms']:.3f} ms")
+        
+        logging.info(f"\n5. Total Latency Per Frame:")
+        logging.info(f"   Mean: {ptp_stats['mean_total_latency_ms']:.3f} ms")
+        logging.info(f"   Min/P95/P99/Max: {ptp_stats['min_total_latency_ms']:.3f} / {ptp_stats['p95_total_latency_ms']:.3f} / {ptp_stats['p99_total_latency_ms']:.3f} / {ptp_stats['max_total_latency_ms']:.3f} ms")
+        
+        logging.info(f"\n6. Inter-Frame Jitter (PTP clock stability):")
+        expected_interval_ms = 16.67  # All IMX274 modes run at 60fps
+        logging.info(f"   Mean interval: {ptp_stats['mean_frame_interval_ms']:.3f} ms (expected: ~{expected_interval_ms:.2f} ms)")
+        logging.info(f"   Jitter: {ptp_stats['frame_jitter_pct']:.3f}%")
+        logging.info(f"   Std Dev: {ptp_stats['stdev_frame_interval_ms']:.3f} ms")
+        logging.info(f"   Frames outside tolerance: {ptp_stats['interval_fail_count']}")
+        
+        if ptp_stats['frame_jitter_pct'] > 10.0:
+            logging.warning(f"   [!]  High jitter ({ptp_stats['frame_jitter_pct']:.2f}%) - check camera configuration")
+        else:
+            logging.info(f"   ✓ Frame timing is stable")
+        
+        # Print summary table
+        logging.info(f"\n")
+        logging.info(f"{'='*80}")
+        logging.info(f"LATENCY SUMMARY TABLE (Average values for {ptp_stats['frames_analyzed']} frames in ms)")
+        logging.info(f"{'='*80}\n")
+        
+        # Calculate column widths
+        col_width = 20
+        
+        # Row 1: Headers
+        logging.info(f"{'='*91}")
+        logging.info(f"|{'Frame Latency':^{col_width}} | {'CPU Wake Up':^{col_width}} | {'ReceiverOp':^{col_width}} | {'ISP+Viz Op':^{col_width}}|")
+        logging.info(f"|{'-'*col_width}-+-{'-'*col_width}-+-{'-'*col_width}-+-{'-'*col_width}|")
+        
+        # Row 2: Values
+        logging.info(f"|{ptp_stats['mean_frame_latency_ms']:^{col_width}.3f} | {ptp_stats['mean_cpu_wakeup_ms']:^{col_width}.3f} | {ptp_stats['mean_receiver_latency_ms']:^{col_width}.3f} | {ptp_stats['mean_isp_viz_latency_ms']:^{col_width}.3f}|")
+        logging.info(f"|{'-'*col_width}-+-{'-'*col_width}-+-{'-'*col_width}-+-{'-'*col_width}|")
+         
+        # Row 3: Total Latency header (merged all cols)
+        logging.info(f"|{'Total Latency Per Frame':^89}|")
+        logging.info(f"|{'-'*89}|")
+        
+        # Row 4: Total Latency value (merged all cols)
+        logging.info(f"|{ptp_stats['mean_total_latency_ms']:^{89}.3f}|")
+        logging.info(f"{'='*91}\n")
+        
+
+        return ptp_stats
         
     except Exception as e:
         logging.warning(f"PTP measurement failed: {e}", exc_info=True)
@@ -650,7 +744,7 @@ def _measure_hololink_ptp(camera_ip: str = "192.168.0.2", frame_limit: int = 300
 def argument_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify IMX274 PTP timestamp accuracy")
     parser.add_argument("--camera-ip", type=str, default="192.168.0.2", help="Hololink device IP")
-    parser.add_argument("--camera-mode", type=int, default=1, help="Camera mode (0-6, all run at 60fps)")
+    parser.add_argument("--camera-mode", type=int, default=0, help="Camera mode (0-1, all run at 60fps)")
     parser.add_argument("--frame-limit", type=int, default=300, help="Number of frames to analyze")
     
     return parser.parse_args()
@@ -678,58 +772,50 @@ def main() -> Tuple[bool, str, dict]:
             "camera_mode": cam_mode,
             "frame_limit": frame_lim,
             "frames_captured": 0,
-            "valid_frames": 0,
-            "invalid_frames": 0,
-            "mean_frame_acquisition_ms": 0,
-            "expected_frame_acquisition_ms": 0,  # Unknown when measurement fails
-            "min_frame_acquisition_ms": 0,
-            "max_frame_acquisition_ms": 0,
-            "p95_frame_acquisition_ms": 0,
-            "p99_frame_acquisition_ms": 0,
-            "stdev_frame_acquisition_us": 0,
+            "frames_with_missing_metadata": 0,
+            "frames_analyzed": 0,
+            "mean_frame_latency_ms": 0,
+            "expected_frame_latency_ms": 0,
+            "mean_cpu_wakeup_ms": 0,
+            "mean_receiver_latency_ms": 0,
+            "mean_isp_viz_latency_ms": 0,
+            "mean_total_latency_ms": 0,
             "mean_frame_interval_ms": 0,
             "stdev_frame_interval_ms": 0,
             "frame_jitter_pct": 0,
             "interval_fail_count": 0,
-            "mean_network_latency_ms": 0,
-            "min_network_latency_ms": 0,
-            "max_network_latency_ms": 0,
-            "p95_network_latency_ms": 0,
-            "p99_network_latency_ms": 0,
-            "stdev_network_latency_us": 0,
-            "network_latency_pass": False,
-            "expected_interval_ms": 16.67,  # 60fps all modes
+            "expected_interval_ms": 16.67,
             "test_duration_sec": 0,
         }
         print(f"📊 Metrics: {stats}")
         return ptp_pass, "PTP measurement failed", stats
     else:
         # Extract metrics for validation
-        mean_frame_acquisition = result['mean_frame_acquisition_ms']
-        mean_network_latency = result['mean_network_latency_ms']
+        mean_frame_latency = result['mean_frame_latency_ms']
+        mean_cpu_wakeup = result['mean_cpu_wakeup_ms']
+        mean_receiver_latency = result['mean_receiver_latency_ms']
+        mean_isp_viz_latency = result['mean_isp_viz_latency_ms']
+        mean_total_latency = result['mean_total_latency_ms']
         interval_fail_count = result['interval_fail_count']
-        network_latency_pass = result['network_latency_pass']
+        jitter_pct = result['frame_jitter_pct']
         
-        # Expected frame acquisition times (mode-specific, based on vertical resolution):
-        # Mode 0 (4K 3840x2160): 2160 lines × ~7.3µs/line ≈ 15.8ms active readout
-        # Mode 1 (1080p 1920x1080): 1080 lines × ~7.3µs/line ≈ 7.87ms active readout
-        # Mode 2 (4K 12-bit): Same vertical resolution as Mode 0 → 15.8ms
-        EXPECTED_FRAME_ACQ_MS = {
+        # Expected frame latency (mode-specific):
+        EXPECTED_FRAME_LAT_MS = {
             0: 15.8,   # Mode 0: 4K 60fps
             1: 7.87,   # Mode 1: 1080p 60fps
             2: 15.8,   # Mode 2: 4K 60fps 12-bit
         }
-        expected_acq_ms = EXPECTED_FRAME_ACQ_MS.get(cam_mode, 15.8)  # Default to 4K if mode unknown
+        expected_lat_ms = EXPECTED_FRAME_LAT_MS.get(cam_mode, 15.8)
         tolerance = 0.20  # ±20%
         
-        # Pass criteria (NVIDIA-style):
-        # 1. Frame acquisition time within ±20% of expected (mode-specific)
-        # 2. Network latency < 12ms (Linux UDP threshold)
-        # 3. Inter-frame jitter acceptable (< 10% of frames outside tolerance)
+        # Pass criteria matching IMX258:
+        # 1. Frame latency within ±20% of expected
+        # 2. Jitter < 10%
+        # 3. Inter-frame interval stability (< 10% of frames outside tolerance)
         ptp_pass = (
-            (expected_acq_ms * (1 - tolerance) <= mean_frame_acquisition <= expected_acq_ms * (1 + tolerance)) and  # Frame acq time OK
-            network_latency_pass and  # Network latency < 12ms
-            (interval_fail_count <= frame_lim * 0.1)  # Max 10% jitter failures
+            (expected_lat_ms * (1 - tolerance) <= mean_frame_latency <= expected_lat_ms * (1 + tolerance)) and
+            (jitter_pct < 10.0) and
+            (interval_fail_count <= frame_lim * 0.1)
         )
         
         stats = {
@@ -737,32 +823,50 @@ def main() -> Tuple[bool, str, dict]:
             "camera_mode": cam_mode,
             "frame_limit": frame_lim,
             "frames_captured": result['frames_captured'],
-            "valid_frames": result['valid_frames'],
-            "invalid_frames": result.get('invalid_frames', 0),
+            "frames_with_missing_metadata": result['frames_with_missing_metadata'],
+            "frames_analyzed": result['frames_analyzed'],
             
-            # Frame acquisition time
-            "mean_frame_acquisition_ms": result['mean_frame_acquisition_ms'],
-            "expected_frame_acquisition_ms": expected_acq_ms,  # Mode-specific expected value
-            "min_frame_acquisition_ms": result['min_frame_acquisition_ms'],
-            "max_frame_acquisition_ms": result['max_frame_acquisition_ms'],
-            "p95_frame_acquisition_ms": result['p95_frame_acquisition_ms'],
-            "p99_frame_acquisition_ms": result['p99_frame_acquisition_ms'],
-            "stdev_frame_acquisition_us": result['stdev_frame_acquisition_us'],
+            # Frame Latency (FPGA processing)
+            "mean_frame_latency_ms": result['mean_frame_latency_ms'],
+            "expected_frame_latency_ms": expected_lat_ms,
+            "min_frame_latency_ms": result['min_frame_latency_ms'],
+            "max_frame_latency_ms": result['max_frame_latency_ms'],
+            "p95_frame_latency_ms": result['p95_frame_latency_ms'],
+            "p99_frame_latency_ms": result['p99_frame_latency_ms'],
             
-            # Inter-frame jitter
+            # CPU Wake Up Time
+            "mean_cpu_wakeup_ms": result['mean_cpu_wakeup_ms'],
+            "min_cpu_wakeup_ms": result['min_cpu_wakeup_ms'],
+            "max_cpu_wakeup_ms": result['max_cpu_wakeup_ms'],
+            "p95_cpu_wakeup_ms": result['p95_cpu_wakeup_ms'],
+            "p99_cpu_wakeup_ms": result['p99_cpu_wakeup_ms'],
+            
+            # Receiver Latency
+            "mean_receiver_latency_ms": result['mean_receiver_latency_ms'],
+            "min_receiver_latency_ms": result['min_receiver_latency_ms'],
+            "max_receiver_latency_ms": result['max_receiver_latency_ms'],
+            "p95_receiver_latency_ms": result['p95_receiver_latency_ms'],
+            "p99_receiver_latency_ms": result['p99_receiver_latency_ms'],
+            
+            # ISP + Visualizer Latency
+            "mean_isp_viz_latency_ms": result['mean_isp_viz_latency_ms'],
+            "min_isp_viz_latency_ms": result['min_isp_viz_latency_ms'],
+            "max_isp_viz_latency_ms": result['max_isp_viz_latency_ms'],
+            "p95_isp_viz_latency_ms": result['p95_isp_viz_latency_ms'],
+            "p99_isp_viz_latency_ms": result['p99_isp_viz_latency_ms'],
+            
+            # Total Latency (Complete frame processing time)
+            "mean_total_latency_ms": result['mean_total_latency_ms'],
+            "min_total_latency_ms": result['min_total_latency_ms'],
+            "max_total_latency_ms": result['max_total_latency_ms'],
+            "p95_total_latency_ms": result['p95_total_latency_ms'],
+            "p99_total_latency_ms": result['p99_total_latency_ms'],
+            
+            # Inter-frame jitter (PTP domain)
             "mean_frame_interval_ms": result['mean_frame_interval_ms'],
             "stdev_frame_interval_ms": result['stdev_frame_interval_ms'],
             "frame_jitter_pct": result['frame_jitter_pct'],
             "interval_fail_count": result['interval_fail_count'],
-            
-            # Network latency (NEW)
-            "mean_network_latency_ms": result['mean_network_latency_ms'],
-            "min_network_latency_ms": result['min_network_latency_ms'],
-            "max_network_latency_ms": result['max_network_latency_ms'],
-            "p95_network_latency_ms": result['p95_network_latency_ms'],
-            "p99_network_latency_ms": result['p99_network_latency_ms'],
-            "stdev_network_latency_us": result['stdev_network_latency_us'],
-            "network_latency_pass": result['network_latency_pass'],
             
             # Metadata
             "expected_interval_ms": result['expected_interval_ms'],
@@ -772,14 +876,14 @@ def main() -> Tuple[bool, str, dict]:
         print(f"📊 Metrics: {stats}")
         
         if ptp_pass:
-            return True, (f"PTP validation passed (Frame acq={mean_frame_acquisition:.2f}ms, "
-                         f"Network latency={mean_network_latency:.2f}ms)"), stats
+            return True, (f"PTP validation passed (Frame latency={mean_frame_latency:.2f}ms, "
+                         f"Total latency={mean_total_latency:.2f}ms, Jitter={jitter_pct:.2f}%)"), stats
         else:
             failure_reasons = []
-            if not (expected_acq_ms * (1 - tolerance) <= mean_frame_acquisition <= expected_acq_ms * (1 + tolerance)):
-                failure_reasons.append(f"Frame acquisition={mean_frame_acquisition:.2f}ms (expected {expected_acq_ms}±{int(tolerance*100)}% for mode {cam_mode})")
-            if not network_latency_pass:
-                failure_reasons.append(f"Network latency={mean_network_latency:.2f}ms (max 12ms)")
+            if not (expected_lat_ms * (1 - tolerance) <= mean_frame_latency <= expected_lat_ms * (1 + tolerance)):
+                failure_reasons.append(f"Frame latency={mean_frame_latency:.2f}ms (expected {expected_lat_ms}±{int(tolerance*100)}% for mode {cam_mode})")
+            if jitter_pct >= 10.0:
+                failure_reasons.append(f"Jitter={jitter_pct:.2f}% (max 10%)")
             if interval_fail_count > frame_lim * 0.1:
                 failure_reasons.append(f"Jitter failures={interval_fail_count} (max {int(frame_lim*0.1)})")
             
